@@ -1,0 +1,53 @@
+name: Check for network updates
+
+on:
+  schedule:
+    - cron: "17 1 * * 1"   # Mondays 09:17 Singapore time / 10:17 Tokyo time
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - city: Singapore
+            script: tools/check-lta-updates.mjs
+          - city: Tokyo
+            script: tools/check-tokyo-updates.mjs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pdftotext
+        if: matrix.city == 'Singapore'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+      - name: Compare planner data with the operator's site
+        id: check
+        run: |
+          set +e
+          node ${{ matrix.script }} --out report.md
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+      - name: Open or update an issue
+        if: steps.check.outputs.status == '2'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "${{ matrix.city }} network changed: update planner data"
+        run: |
+          num=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number -q '.[0].number')
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body-file report.md
+          else
+            gh issue create --title "$TITLE" --body-file report.md
+          fi
+      - name: Fail if the site could not be checked
+        if: steps.check.outputs.status == '1'
+        run: |
+          echo "::error::Could not reach the ${{ matrix.city }} source page. Run ${{ matrix.script }} locally."
+          exit 1

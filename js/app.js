@@ -1,47 +1,54 @@
-/* Singapore MRT Planner - UI. Depends on data/network.js, data/fares.js, js/planner.js */
+/* Metro Planner - UI for every city. Depends on data/cities.js and js/planner.js; city data loads on demand. */
 (function () {
   "use strict";
-  const N = window.MRT_NETWORK, F = window.MRT_FARES;
+  const CITIES = window.MRT_CITY_LIST || [];
+  const cityById = new Map(CITIES.map((c) => [c.id, c]));
   const SVGNS = "http://www.w3.org/2000/svg";
   const $ = (s, el) => (el || document).querySelector(s);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-  const HUB_LINE = { STC: "SE", PTC: "PE" }; // LRT hub codes that are not a line id
-  const DARK_TEXT = new Set(["#FA9E0D"]); // white on CCL orange is too faint
-  const DEFAULT_EXAMPLE = ["jurong-east", "changi-airport"];
+  const HUB_LINE = { STC: "SE", PTC: "PE" }; // Singapore LRT hub codes that are not a line id
 
   const today = MRTPlanner.todayISO();
-  const state = { from: null, to: null, date: today, sel: 0, res: null, example: false, moreOpen: false, showXfer: true };
+  const state = { city: null, from: null, to: null, date: today, sel: 0, res: null, example: false, moreOpen: false, showXfer: true };
   try { if (localStorage.getItem("mrt-show-transfers") === "0") state.showXfer = false; } catch (_) { /* storage unavailable */ }
-  let planner = MRTPlanner.create(N, F, { date: state.date });
-  const stationById = new Map(N.stations.map((s) => [s.id, s]));
+
+  // current city
+  let city = null, N = null, F = null, planner = null, stationById = new Map(), moneyFmt = null;
 
   // ------------------------------------------------------------ helpers ---
-  const codeLine = (code) => { const p = (code.match(/^[A-Z]+/) || [""])[0]; return N.lines[HUB_LINE[p] || p]; };
+  const codeLine = (code) => { const p = (code.match(/^[A-Za-z]+/) || [""])[0]; return N.lines[HUB_LINE[p] || p]; };
+  function textOn(hex) {
+    // white text unless contrast with white is below 3:1
+    const v = hex.replace("#", "").match(/../g).map((x) => parseInt(x, 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)));
+    const L = 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+    return 1.05 / (L + 0.05) >= 3 ? "" : " dark-text";
+  }
   function codeBadge(code) {
     const L = codeLine(code);
     const c = L ? L.color : "#748477";
     const soon = !planner.codeOpen(code);
-    return `<span class="code${soon ? " soon" : ""}${DARK_TEXT.has(c) ? " dark-text" : ""}" style="--c:${c}" title="${esc(L ? L.name : code)}${soon ? " (opening soon)" : ""}">${esc(code)}</span>`;
+    return `<span class="code${soon ? " soon" : ""}${textOn(c)}" style="--c:${c}" title="${esc(L ? L.name : code)}${soon ? " (opening soon)" : ""}">${esc(code)}</span>`;
   }
   const badges = (s) => `<span class="codes">${s.codes.map(codeBadge).join("")}</span>`;
   function lineChip(lineId) {
     const L = N.lines[lineId];
-    return `<span class="chip${DARK_TEXT.has(L.color) ? " dark-text" : ""}" style="--c:${L.color}" title="${esc(L.name)}">${esc(L.short)}</span>`;
+    return `<span class="chip${textOn(L.color)}" style="--c:${L.color}" title="${esc(L.name)}">${esc(L.short)}</span>`;
   }
-  const money = (c) => "$" + (c / 100).toFixed(2);
+  const money = (amount) => moneyFmt.format(amount / Math.pow(10, F.minorUnits ?? 2));
+  const localName = (s) => s.ja || s.zh || "";
   const lvlChip = (t, text) => `<span class="lvl lvl-${t.level.id}${t.tapOut ? " tap" : ""}">${text || `${t.min} min`}</span>`;
   function pairHtml(t) {
     if (t.fromCode === t.toCode) {
-      const names = t.lines.map((l) => N.lines[l].name.match(/\((.*)\)/)).map((m) => (m ? m[1].replace(/ Loop$/, "") : ""));
-      return `<span class="codes">${codeBadge(t.fromCode)}</span> <span class="pairtxt">${esc(names.join(" ↔ "))} loop</span>`;
+      const names = t.lines.map((l) => { const m = N.lines[l].name.match(/\((.*)\)/); return m ? m[1] : N.lines[l].name; });
+      return `<span class="codes">${codeBadge(t.fromCode)}</span> <span class="pairtxt">${esc(names.join(" ↔ "))}</span>`;
     }
-    return `<span class="codes">${codeBadge(t.fromCode)}<span class="arr" aria-hidden="true">↔</span>${codeBadge(t.toCode)}</span>`;
+    return `<span class="codes">${codeBadge(t.fromCode)}<span class="arr" aria-hidden="true">↔</span>${codeBadge(t.toCode)}</span>` +
+      (t.toStation !== t.station ? ` <span class="pairtxt">${esc(nm(t.toStation))}</span>` : "");
   }
   function fmtDate(iso) {
     const [y, m, d] = iso.split("-").map(Number);
-    return new Date(y, m - 1, d).toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric" });
+    return new Date(y, m - 1, d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
   }
   const firstOpening = (s) => (s.opens ? Object.values(s.opens).sort()[0] : null);
   const nm = (id) => stationById.get(id).name;
@@ -50,24 +57,26 @@
     if (a.length < 2) return a.join("");
     return a.slice(0, -1).join(", ") + " and " + a[a.length - 1];
   }
+  const squash = (s) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]/g, "");
 
   // ------------------------------------------------------------- search ---
   function search(q) {
     q = q.trim().toLowerCase();
-    const qc = q.replace(/\s+/g, "");
+    const qs = squash(q);
     const out = [];
     for (const s of N.stations) {
       if (!q) { out.push([0, s]); continue; }
-      const n = s.name.toLowerCase();
+      const n = s.name.toLowerCase(), ns = squash(s.name);
       let score = -1;
-      if (n === q) score = 100;
-      else if (n.startsWith(q)) score = 80;
-      else if (n.split(/[\s-]+/).some((w) => w.startsWith(q))) score = 60;
-      else if (n.includes(q)) score = 40;
+      if (n === q || (qs && ns === qs)) score = 100;
+      else if (n.startsWith(q) || (qs && ns.startsWith(qs))) score = 80;
+      else if (n.split(/[\s()-]+/).some((w) => w.startsWith(q))) score = 60;
+      else if (n.includes(q) || (qs.length > 2 && ns.includes(qs))) score = 40;
       const codes = s.codes.map((c) => c.toLowerCase());
-      if (codes.includes(qc)) score = Math.max(score, 95);
-      else if (qc.length >= 2 && codes.some((c) => c.startsWith(qc))) score = Math.max(score, 50);
-      if (s.zh && s.zh.includes(q)) score = Math.max(score, 70);
+      if (codes.includes(qs)) score = Math.max(score, 95);
+      else if (qs.length >= 2 && codes.some((c) => c.startsWith(qs))) score = Math.max(score, 50);
+      const ln = localName(s);
+      if (ln && ln.includes(q.trim())) score = Math.max(score, ln === q.trim() ? 98 : 70);
       if (score >= 0) out.push([score, s]);
     }
     out.sort((a, b) => b[0] - a[0] || a[1].name.localeCompare(b[1].name));
@@ -77,12 +86,14 @@
   function setupCombo(which) {
     const input = $(`#${which}-input`), list = $(`#${which}-list`);
     let items = [], active = -1;
-    const restore = () => { input.value = state[which] ? nm(state[which]) : ""; };
+    const restore = () => { input.value = state[which] && stationById.has(state[which]) ? nm(state[which]) : ""; };
     function render() {
       list.innerHTML = items.map((s, i) => {
         const soon = !planner.isStationOpen(s.id);
+        const ln = localName(s);
         return `<li id="${which}-opt-${i}" role="option" aria-selected="${i === active}" data-id="${s.id}">` +
-          `<span class="nm">${esc(s.name)}${soon ? ` <span class="soon">opens ${fmtDate(firstOpening(s))}</span>` : ""}</span>${badges(s)}</li>`;
+          `<span class="nm">${esc(s.name)}${ln ? ` <span class="ln" lang="${city.id === "tokyo" ? "ja" : "zh"}">${esc(ln)}</span>` : ""}` +
+          `${soon ? ` <span class="soon">opens ${fmtDate(firstOpening(s))}</span>` : ""}</span>${badges(s)}</li>`;
       }).join("");
       if (active >= 0) {
         input.setAttribute("aria-activedescendant", `${which}-opt-${active}`);
@@ -91,6 +102,7 @@
       } else input.removeAttribute("aria-activedescendant");
     }
     function open(q) {
+      if (!N) return;
       items = search(q);
       active = q.trim() && items.length ? 0 : -1;
       render();
@@ -151,7 +163,7 @@
 
   function renderNotices() {
     const upcoming = new Map();
-    for (const s of N.stations) for (const [c, d] of Object.entries(s.opens || {})) {
+    for (const s of N.stations) for (const [, d] of Object.entries(s.opens || {})) {
       if (d > state.date) { if (!upcoming.has(d)) upcoming.set(d, new Set()); upcoming.get(d).add(s.name); }
     }
     let h = "";
@@ -164,6 +176,7 @@
       h += `<div class="notice"><div>Planning for <b>${fmtDate(state.date)}</b>, including ${esc(listJoin(opened.map((s) => s.name)))}, which open before then.</div></div>`;
     }
     $("#notices").innerHTML = h;
+    $(".when").hidden = !N.stations.some((s) => s.opens) && !(F.schedules && F.schedules.length > 1);
   }
   $("#notices").addEventListener("click", (e) => { const b = e.target.closest("[data-date]"); if (b) setDate(b.dataset.date); });
 
@@ -183,17 +196,20 @@
     return (s.badges && s.badges[code]) || [s.x, s.y];
   }
   function labelRows(s) {
-    // [text, x, y, anchor, size]; keep the side of the station the map puts the label on
-    return (s.label || []).map(([t, x, y, w, fs]) => {
+    // [text, x, y, anchor, size, minor]; keep the side of the station the map puts the label on
+    return (s.label || []).map(([t, x, y, w, fs, minor]) => {
       let anchor = "start", ax = x;
       if (x + w <= s.x + 3) { anchor = "end"; ax = x + w; }
       else if (x < s.x - 3) { anchor = "middle"; ax = x + w / 2; }
-      return [t, ax, y, anchor, fs];
+      return [t, ax, y, anchor, fs, minor];
     });
   }
-  function drawLabel(s, parent, extraClass) {
-    for (const [t, x, y, anchor, fs] of labelRows(s)) {
-      const tx = el("text", { x, y, "font-size": (fs * 0.95).toFixed(2), "text-anchor": anchor, class: "lbl" + (extraClass || ""), "data-st": s.id }, parent);
+  function drawLabel(s, parent, extraClass, keep, nudge) {
+    for (let [t, x, y, anchor, fs, minor] of labelRows(s)) {
+      if (nudge) { // move clear of a start/end pin
+        if (anchor === "start") x += nudge; else if (anchor === "end") x -= nudge; else y += y < s.y ? -nudge : nudge;
+      }
+      const tx = el("text", { x, y, "font-size": (fs * 0.95).toFixed(2), "text-anchor": anchor, class: "lbl" + (extraClass || "") + (minor && !keep ? " minor" : ""), "data-st": s.id }, parent);
       tx.textContent = t;
     }
   }
@@ -201,19 +217,27 @@
   function drawMap() {
     svg.innerHTML = "";
     const base = el("g", { class: "base" }, svg);
-    const gl = el("g", {}, base), gs = el("g", {}, base), gt = el("g", {}, base);
+    const gw = el("g", {}, base), gl = el("g", {}, base), gs = el("g", {}, base);
     layers.xfer = el("g", { class: "xferlayer" }, svg);
+    const gt = el("g", { class: "base" }, svg);
     layers.route = el("g", {}, svg);
     layers.pins = el("g", {}, svg);
 
+    // walkways between linked stations
+    for (const [a, b] of (N.meta && N.meta.walkLinks) || []) {
+      const sa = stationById.get(a), sb = stationById.get(b);
+      el("line", { x1: sa.x, y1: sa.y, x2: sb.x, y2: sb.y, class: "walk" }, gw);
+    }
+
     const ids = Object.keys(N.lines);
     const order = ids.filter((id) => N.lines[id].kind === "LRT").concat(ids.filter((id) => N.lines[id].kind !== "LRT"));
+    const lineW = (N.meta && N.meta.lineWidth) || 3.6;
     for (const id of order) {
       const L = N.lines[id];
       for (const p of L.paths) {
         let run = [], runSoon = null;
         const flush = () => {
-          if (run.length > 1) el("polyline", { class: "ln" + (runSoon ? " soon" : ""), points: run.map((q) => q.join(",")).join(" "), stroke: L.color, "stroke-width": L.kind === "LRT" ? 2.4 : 3.6 }, gl);
+          if (run.length > 1) el("polyline", { class: "ln" + (runSoon ? " soon" : ""), points: run.map((q) => q.join(",")).join(" "), stroke: L.color, "stroke-width": L.kind === "LRT" ? 2.4 : lineW }, gl);
         };
         for (let i = 0; i < p.stops.length - 1; i++) {
           const a = p.stops[i], b = p.stops[i + 1];
@@ -236,11 +260,13 @@
         const sorted = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((q) => q.join(",")).join(" ");
         el("polyline", { points: sorted, fill: "none", "stroke-linecap": "round", "stroke-linejoin": "round", "stroke-width": 8, style: "stroke:var(--ink)" }, g);
         el("polyline", { points: sorted, fill: "none", "stroke-linecap": "round", "stroke-linejoin": "round", "stroke-width": 5.4, style: "stroke:var(--station-fill)" }, g);
+      } else if (s.codes.length > 1) {
+        el("circle", { cx: s.x, cy: s.y, r: 3.3, "stroke-width": 1.4, style: "fill:var(--station-fill);stroke:var(--ink)" }, g);
       } else {
         const L = codeLine(s.codes[0]);
-        el("circle", { cx: s.x, cy: s.y, r: L.kind === "LRT" ? 1.9 : 2.5, class: "stn", stroke: open ? L.color : "currentColor", "stroke-width": 1.5, "stroke-dasharray": open ? "" : "1.4 1", style: open ? "" : "color:var(--muted)" }, g);
+        el("circle", { cx: s.x, cy: s.y, r: L.kind === "LRT" ? 1.9 : 2.3, class: "stn", stroke: open ? L.color : "currentColor", "stroke-width": 1.4, "stroke-dasharray": open ? "" : "1.4 1", style: open ? "" : "color:var(--muted)" }, g);
       }
-      el("circle", { cx: s.x, cy: s.y, r: 7, class: "hit" }, g);
+      el("circle", { cx: s.x, cy: s.y, r: 6, class: "hit" }, g);
       drawLabel(s, gt, open ? "" : " soon");
     }
 
@@ -292,10 +318,13 @@
       if (!seen.has(label)) { seen.add(label); items.push([L.color, label]); }
     }
     items.sort((a, b) => (a[1] === "LRT") - (b[1] === "LRT"));
+    const hasTap = (N.transfers || []).some((t) => t.tapOut);
     $("#legend").innerHTML = items.map(([c, label]) => `<span><i style="--c:${c}"></i>${esc(label)}</span>`).join("") +
       (N.stations.some((s) => !planner.isStationOpen(s.id)) ? `<span><i class="dash"></i>Opening soon</span>` : "") +
+      ((N.meta && N.meta.walkLinks && N.meta.walkLinks.length) ? `<span><i class="dot"></i>Walkway</span>` : "") +
       (state.showXfer ? `<div class="lg-x"><span class="lg-t">Transfer time</span>${MRTPlanner.LEVELS.map((l, i, a) =>
-        `<span class="lvl lvl-${l.id}">${i === 0 ? `≤${l.max}` : l.max === Infinity ? `${a[i - 1].max + 1}+` : `${a[i - 1].max + 1}–${l.max}`}</span>`).join("")}<span class="lg-t">min</span><span class="lvl tap lvl-verylong">tap out</span></div>` : "");
+        `<span class="lvl lvl-${l.id}">${i === 0 ? `≤${l.max}` : l.max === Infinity ? `${a[i - 1].max + 1}+` : `${a[i - 1].max + 1}–${l.max}`}</span>`).join("")}<span class="lg-t">min</span>` +
+        (hasTap ? `<span class="lvl tap lvl-verylong">${esc(city.id === "tokyo" ? "outside gates" : "tap out")}</span>` : "") + `</div>` : "");
   }
 
   function currentOption() {
@@ -310,6 +339,13 @@
     if (!o) { for (const p of layers.xfer.children) p.style.visibility = ""; return; }
     const g = layers.route;
     const onRoute = new Set();
+    const walkLine = (a, b) => {
+      const sa = stationById.get(a), sb = stationById.get(b);
+      el("line", { x1: sa.x, y1: sa.y, x2: sb.x, y2: sb.y, class: "walk on-route" }, g);
+    };
+    if (o.startWalk) { walkLine(o.startWalk.from, o.startWalk.to); onRoute.add(o.startWalk.from); }
+    if (o.endWalk) { walkLine(o.endWalk.from, o.endWalk.to); onRoute.add(o.endWalk.to); }
+    for (const t of o.transfers) if (t.station !== t.toStation) walkLine(t.station, t.toStation);
     for (const leg of o.legs) {
       const pts = leg.codes.map(pos).map((q) => q.join(",")).join(" ");
       el("polyline", { points: pts, fill: "none", "stroke-width": 9, "stroke-linecap": "round", "stroke-linejoin": "round", style: "stroke:var(--map-bg)" }, g);
@@ -322,7 +358,7 @@
         el("circle", { cx: x, cy: y, r: 1.8, fill: "#fff", stroke: leg.color, "stroke-width": 1.2, "data-st": planner.stationByCode(c).id }, g);
       });
     }
-    for (const id of onRoute) drawLabel(stationById.get(id), g, "");
+    for (const id of onRoute) drawLabel(stationById.get(id), g, "", true, id === state.from || id === state.to ? 3.5 : 0);
     // pills under the route line would be half covered; the route's own transfers get their own pill
     for (const p of layers.xfer.children) p.style.visibility = onRoute.has(p.dataset.st) ? "hidden" : "";
     for (const t of o.transfers) {
@@ -336,7 +372,7 @@
     const g = layers.pins;
     g.innerHTML = "";
     const pin = (id, letter, cls) => {
-      if (!id) return;
+      if (!id || !stationById.has(id)) return;
       const s = stationById.get(id);
       const pg = el("g", { "data-st": id }, g);
       el("circle", { cx: s.x, cy: s.y, r: 6.4, "stroke-width": 1.6, style: cls === "a" ? "fill:var(--ink);stroke:var(--map-bg)" : "fill:var(--signal);stroke:var(--signal-ink)" }, pg);
@@ -352,6 +388,8 @@
   function size() { return { cw: svg.clientWidth || 800, ch: svg.clientHeight || 600 }; }
   function applyView() {
     svg.setAttribute("viewBox", `${view.x.toFixed(2)} ${view.y.toFixed(2)} ${view.w.toFixed(2)} ${view.h.toFixed(2)}`);
+    // hide minor labels while zoomed far out (only maps that mark labels as minor)
+    if (bounds) svg.classList.toggle("lod-far", view.w > bounds.w * 0.62);
     positionPopup();
   }
   // Fit box b (map units) into the part of the map not covered by the hint, tools and legend.
@@ -386,10 +424,9 @@
   function fitAll(animate) { goTo(fitBox(bounds, 4), animate); }
   function fitRoute(o, animate) {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const leg of o.legs) for (const c of leg.codes) {
-      const [x, y] = pos(c);
-      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
-    }
+    const add = ([x, y]) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); };
+    for (const leg of o.legs) for (const c of leg.codes) add(pos(c));
+    for (const w of [o.startWalk, o.endWalk]) if (w) { const a = stationById.get(w.from), b = stationById.get(w.to); add([a.x, a.y]); add([b.x, b.y]); }
     goTo(fitBox({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, 36, 360), animate);
   }
   function zoomAt(px, py, f) {
@@ -482,8 +519,9 @@
     popupStation = id;
     const open = planner.isStationOpen(id);
     const d = firstOpening(s);
+    const ln = localName(s);
     popup.innerHTML = `<button type="button" class="x" data-act="close" aria-label="Close">&times;</button>` +
-      `<h3>${esc(s.name)}${s.zh ? `<span class="zh">${esc(s.zh)}</span>` : ""}</h3>${badges(s)}` +
+      `<h3>${esc(s.name)}${ln ? `<span class="zh" lang="${city.id === "tokyo" ? "ja" : "zh"}">${esc(ln)}</span>` : ""}</h3>${badges(s)}` +
       transfersListHtml(planner.stationTransfers(id)) +
       (open
         ? `<div class="acts"><button type="button" class="a" data-act="from">Start here</button><button type="button" class="b" data-act="to">Go here</button></div>`
@@ -543,33 +581,41 @@
     updateHash();
   }
 
-  function lineName(leg) { return leg.lineName; }
   function towardsText(leg) {
     if (leg.towards) return ` towards <b>${esc(nm(leg.towards))}</b>`;
     return leg.nStops ? ` (next stop: ${esc(nm(leg.nextStop))})` : "";
   }
+  const tapOutHtml = () => `<div class="sub"><span class="tapout">${esc(city.tapOutLabel || "Tap out to transfer")}</span> ${esc(city.tapOutNote || "")}</div>`;
 
   function stepsHtml(o) {
     let h = `<ol class="steps">`;
+    if (o.startWalk) {
+      h += `<li class="stop start"><span class="pinmark pin-a">A</span><span class="name">${esc(nm(o.startWalk.from))}</span>${badges(stationById.get(o.startWalk.from))}` +
+        `<div class="sub">Walk to <b>${esc(nm(o.startWalk.to))}</b> station · about ${o.startWalk.min} min</div></li><li class="walk"></li>`;
+    }
     o.legs.forEach((leg, i) => {
       const s = stationById.get(leg.from);
       if (i === 0) {
-        h += `<li class="stop start"><span class="pinmark pin-a">A</span><span class="name">${esc(s.name)}</span>${codeBadge(leg.fromCode)}` +
-          `<div class="sub">Board the <b>${esc(lineName(leg))}</b>${towardsText(leg)}</div></li>`;
+        h += `<li class="stop ${o.startWalk ? "xfer" : "start"}">${o.startWalk ? "" : `<span class="pinmark pin-a">A</span>`}<span class="name">${esc(s.name)}</span>${codeBadge(leg.fromCode)}` +
+          `<div class="sub">Board the <b>${esc(leg.lineName)}</b>${towardsText(leg)}</div></li>`;
       } else {
         const t = o.transfers[i - 1];
-        h += `<li class="stop xfer"><span class="name">${esc(s.name)}</span><span class="codes">${codeBadge(t.fromCode)}${t.fromCode !== t.toCode ? codeBadge(t.toCode) : ""}</span>` +
-          `<div class="sub">Transfer to the <b>${esc(lineName(leg))}</b>${towardsText(leg)}</div>` +
+        const walk = t.station !== t.toStation;
+        h += `<li class="stop xfer"><span class="name">${esc(nm(t.station))}</span><span class="codes">${codeBadge(t.fromCode)}${t.fromCode !== t.toCode ? codeBadge(t.toCode) : ""}</span>` +
+          `<div class="sub">${walk ? `Walk to <b>${esc(nm(t.toStation))}</b> and transfer` : "Transfer"} to the <b>${esc(leg.lineName)}</b>${towardsText(leg)}</div>` +
           `<div class="sub">${lvlChip(t, `about ${t.min} min · ${t.level.label}`)}${t.note && !t.tapOut ? ` ${esc(t.note)}` : ""}</div>` +
-          (t.tapOut ? `<div class="sub"><span class="tapout">Tap out to transfer</span> Tap in again within 15 minutes and it still counts as one journey.</div>` : "") +
-          `</li>`;
+          (t.tapOut ? tapOutHtml() : "") + `</li>`;
       }
       const mid = leg.stops.slice(1, -1);
       h += `<li class="ride" style="--c:${leg.color}">${plural(leg.nStops, "stop")} · ${Math.max(1, Math.round(leg.min))} min` +
         (mid.length ? `<details><summary>Stations passed</summary><ol>${mid.map((id) => `<li>${esc(nm(id))}</li>`).join("")}</ol></details>` : "") + `</li>`;
       if (i === o.legs.length - 1) {
-        const e = stationById.get(leg.to);
-        h += `<li class="stop end"><span class="pinmark pin-b">B</span><span class="name">${esc(e.name)}</span>${codeBadge(leg.toCode)}<div class="sub">Arrive</div></li>`;
+        if (o.endWalk) {
+          h += `<li class="stop xfer"><span class="name">${esc(nm(leg.to))}</span>${codeBadge(leg.toCode)}<div class="sub">Get off and walk to <b>${esc(nm(o.endWalk.to))}</b> · about ${o.endWalk.min} min</div></li><li class="walk"></li>` +
+            `<li class="stop end"><span class="pinmark pin-b">B</span><span class="name">${esc(nm(o.endWalk.to))}</span><div class="sub">Arrive</div></li>`;
+        } else {
+          h += `<li class="stop end"><span class="pinmark pin-b">B</span><span class="name">${esc(nm(leg.to))}</span>${codeBadge(leg.toCode)}<div class="sub">Arrive</div></li>`;
+        }
       }
     });
     h += `</ol>`;
@@ -578,17 +624,24 @@
       const alts = o.alsoVia.map((v) => v.map(nm).join(" and ")).slice(0, 2);
       extra.push(`Takes about the same time if you transfer at ${esc(alts.join(", or at "))} instead.`);
     }
-    extra.push(o.nTransfers ? `${o.rideMin} min on trains and ${o.transferMin} min transferring.` : `${o.rideMin} min on the train.`);
+    const parts = [`${o.rideMin} min on trains`];
+    if (o.nTransfers) parts.push(`${o.transferMin} min transferring`);
+    if (o.walkMin) parts.push(`${Math.round(o.walkMin)} min walking`);
+    extra.push(listJoin(parts) + ".");
     extra.push("Add a few minutes to wait for your first train.");
+    if (o.fare && o.fare.kind === "operator") extra.push(`Fare for this route: ${money(o.fare.ic)} by IC card.`);
     return h + `<p class="breakdown">${extra.join(" ")}</p>`;
   }
 
-  const TAG = { suggested: "Suggested", fastest: "Fastest", direct: "No transfers", "fewest-transfers": "Fewest transfers" };
+  const TAG = { suggested: "Suggested", fastest: "Fastest", direct: "No transfers", "fewest-transfers": "Fewest transfers", cheapest: "Cheapest" };
   function optHtml(o, idx) {
     const sel = idx === state.sel;
     const seq = o.legs.map((l) => lineChip(l.line)).join('<span class="arr" aria-hidden="true">›</span>');
-    const meta = [o.nTransfers ? `${plural(o.nTransfers, "transfer")} at ${esc(listJoin(o.transfers.map((t) => nm(t.station))))}` : "No transfers", plural(o.nStops, "stop")];
-    if (o.tapOuts) meta.push("tap out to transfer");
+    const meta = [];
+    if (o.fare && o.fare.kind === "operator") meta.push(`<b class="ofare">${money(o.fare.ic)}</b>`);
+    meta.push(o.nTransfers ? `${plural(o.nTransfers, "transfer")} at ${esc(listJoin(o.transfers.map((t) => nm(t.station))))}` : "No transfers");
+    meta.push(plural(o.nStops, "stop"));
+    if (o.tapOuts) meta.push(esc((city.tapOutLabel || "tap out").toLowerCase()));
     return `<article class="opt${sel ? " sel" : ""}" data-idx="${idx}">` +
       `<button type="button" class="opt-head" aria-expanded="${sel}" data-idx="${idx}">` +
       (o.tags.length ? `<span class="tags">${o.tags.map((t) => `<span class="tag ${t}">${TAG[t]}</span>`).join("")}</span>` : "") +
@@ -599,12 +652,21 @@
 
   function fareHtml(f) {
     if (!f) return "";
-    return `<div class="fare"><div class="big"><small>Adult card fare</small>${money(f.adultCents)}</div>` +
+    if (f.kind === "operator") {
+      const rows = f.segments.map((s) => `<dt>${esc(s.name)} · ${s.km} km</dt><dd>${money(s.ic)}</dd>`).join("") +
+        (f.discount ? `<dt>Discount for changing operator</dt><dd>−${money(f.discount)}</dd>` : "") +
+        `<dt>Paper ticket</dt><dd>${money(f.ticket)}</dd>`;
+      return `<div class="fare"><div class="big"><small>${esc(city.fareLabel || "Fare")}</small>${money(f.ic)}</div><dl>${rows}</dl>` +
+        `<p>Fares here depend on the route. Tokyo Metro and Toei each charge by distance, and changing between the two takes ${money(70)} off. ` +
+        `This is the fare for the selected route.${f.estimate ? " It changes operator more than once, so check the fare at the station." : ""} ` +
+        `Distances are worked out from the map, so a trip close to a fare boundary may cost one band more or less; <a href="${esc(F.officialCalculator)}" target="_blank" rel="noopener">official fares</a>.</p></div>`;
+    }
+    return `<div class="fare"><div class="big"><small>${esc(city.fareLabel || "Fare")}</small>${money(f.adultCents)}</div>` +
       `<dl><dt>Tap in before 7:45am on weekdays</dt><dd>${money(f.earlyCents)}</dd>` +
       (f.next ? `<dt>From ${fmtDate(f.next.effective)}</dt><dd>${money(f.next.adultCents)}</dd>` : "") +
       `<dt>Fare distance</dt><dd>${f.km} km</dd></dl>` +
       `<p>Every route costs the same, because train fares are charged on the shortest distance between your two stations.` +
-      (f.estimate ? ` This fare band is worked out from the published fare pattern; <a href="${esc(F.officialCalculator)}" target="_blank" rel="noopener">check LTA's fare page</a> if you need it to the cent.` : "") +
+      (f.estimate ? ` This fare band is worked out from the published fare pattern; <a href="${esc(F.officialCalculator)}" target="_blank" rel="noopener">check the official fare</a> if you need it to the cent.` : "") +
       `</p></div>`;
   }
 
@@ -623,7 +685,7 @@
     }
     let h = "";
     if (state.example) h += `<p class="example">Example journey. Choose your own stations above or on the map.</p>`;
-    h += fareHtml(res.fare);
+    h += fareHtml(res.fareModel === "operator-distance" ? (currentOption() || res.options[0]).fare : res.fare);
     h += `<h2>${res.options.length > 1 ? `${res.options.length} route options` : "Your route"}</h2>`;
     res.options.forEach((o, i) => { h += optHtml(o, i); });
     if (res.moreOptions.length) {
@@ -663,7 +725,8 @@
       const rs = rows.filter((t) => t.level.id === L.id);
       if (!rs.length) continue;
       h += `<div class="ggroup"><h3><span class="lvl lvl-${L.id}">${esc(L.label)}</span> ${LEVEL_HEAD[L.id]}</h3><ul>` +
-        rs.map((t) => `<li><button type="button" class="grow" data-st="${t.station}"><span class="gname">${esc(nm(t.station))}</span>${pairHtml(t)}<span class="gmin">${t.min} min</span></button>` +
+        rs.map((t) => `<li><button type="button" class="grow" data-st="${t.station}"><span class="gname">${esc(nm(t.station))}${t.toStation !== t.station ? ` ↔ ${esc(nm(t.toStation))}` : ""}</span>` +
+          `<span class="codes">${codeBadge(t.fromCode)}${t.fromCode !== t.toCode ? `<span class="arr" aria-hidden="true">↔</span>${codeBadge(t.toCode)}` : ""}</span><span class="gmin">${t.min} min</span></button>` +
           (t.note ? `<p class="xnote">${esc(t.note)}</p>` : "") + `</li>`).join("") + `</ul></div>`;
     }
     $("#guide-body").innerHTML = h;
@@ -694,42 +757,117 @@
     drawRoute(currentOption());
     drawPins();
   });
+  syncXferBtn();
 
-  // --------------------------------------------------------------- hash ---
+  // ----------------------------------------------------------- cities ---
+  const loaded = new Map();
+  function loadScript(src) {
+    if (!loaded.has(src)) {
+      loaded.set(src, new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = src;
+        s.onload = resolve;
+        s.onerror = () => { loaded.delete(src); reject(new Error(`Could not load ${src}`)); };
+        document.head.appendChild(s);
+      }));
+    }
+    return loaded.get(src);
+  }
+  async function loadCityData(id) {
+    const D = (window.MRT_DATA = window.MRT_DATA || {});
+    if (!D[id + "/network"]) await loadScript(`data/${id}/network.js`);
+    if (!D[id + "/fares"]) await loadScript(`data/${id}/fares.js`);
+    return { network: D[id + "/network"], fares: D[id + "/fares"] };
+  }
+
+  async function openCity(id) {
+    if (state.city === id) return false;
+    const c = cityById.get(id);
+    $("#planner").setAttribute("aria-busy", "true");
+    const { network, fares } = await loadCityData(id);
+    city = c; N = network; F = fares;
+    state.city = id;
+    stationById = new Map(N.stations.map((s) => [s.id, s]));
+    moneyFmt = new Intl.NumberFormat(c.locale || "en", { style: "currency", currency: F.currency, minimumFractionDigits: F.minorUnits ?? 2, maximumFractionDigits: F.minorUnits ?? 2 });
+    planner = MRTPlanner.create(N, F, { date: state.date });
+    state.from = state.to = null; state.res = null;
+    hidePopup();
+    renderCityChrome();
+    drawMap();
+    bounds = computeBounds();
+    renderNotices();
+    renderGuide();
+    $("#planner").removeAttribute("aria-busy");
+    return true;
+  }
+
+  function renderCityChrome() {
+    $("#city-title").textContent = city.title;
+    $("#city-mark").innerHTML = city.colors.slice(0, 3).map((c) => `<i style="background:${c}"></i>`).join("");
+    const meta = N.meta || {};
+    $("#ver").textContent = city.versionLabel || (meta.systemMap ? `Map ${meta.systemMap}` : "");
+    const sched = planner.scheduleFor(today);
+    const fareLine = sched ? `Fares: ${sched.label}.` : `Fares: ${Object.values(F.operators || {}).map((o) => o.name).join(" and ")} regular fares.`;
+    $("#about-city").innerHTML = (city.about || []).map((p) => `<p>${p}</p>`).join("") + `<p>${esc(fareLine)} Data generated ${esc(meta.generated || "")}.</p>`;
+    document.title = `${city.title} · Interchange`;
+    $("#map").setAttribute("aria-label", `${city.title} network map. Select a station to start or end your journey there.`);
+    $("#from-input").placeholder = city.id === "tokyo" ? "Station name or code, e.g. Shinjuku, G09, 渋谷" : "Station name or code, e.g. NS24";
+  }
+
+  // --------------------------------------------------------------- home ---
+  function renderHome() {
+    $("#city-cards").innerHTML = CITIES.map((c) =>
+      `<a class="city" href="#${c.id}" data-city="${c.id}">` +
+      `<span class="stripes" aria-hidden="true">${c.colors.map((col) => `<i style="background:${col}"></i>`).join("")}</span>` +
+      `<span class="cname">${esc(c.name)}</span><span class="clocal">${esc(c.local)}</span>` +
+      `<span class="csys">${esc(c.system)}</span><span class="csum">${esc(c.summary)}</span>` +
+      `<span class="cgo">Plan a journey <span aria-hidden="true">→</span></span></a>`).join("") +
+      `<div class="city soon-card"><span class="cname">More cities</span><span class="csum">Each city is one data folder, so new ones slot in here.</span></div>`;
+  }
+
+  // ------------------------------------------------------------ routing ---
   function updateHash() {
-    const h = state.from && state.to && !state.example ? `#${state.from}--${state.to}` : "";
-    try { history.replaceState(null, "", h || location.pathname + location.search); } catch (_) { /* ignore */ }
+    if (!state.city) return;
+    const h = state.from && state.to && !state.example ? `#${state.city}--${state.from}--${state.to}` : `#${state.city}`;
+    try { history.replaceState(null, "", h); } catch (_) { /* ignore */ }
   }
-  function readHash() {
-    const m = (location.hash || "").slice(1).split("--");
-    if (m.length === 2 && stationById.has(m[0]) && stationById.has(m[1])) return m;
-    return null;
+  function parseHash() {
+    const parts = (location.hash || "").slice(1).split("--").filter(Boolean);
+    if (!parts.length) return { city: null };
+    if (cityById.has(parts[0])) return { city: parts[0], from: parts[1], to: parts[2] };
+    if (parts.length === 2) return { city: "singapore", from: parts[0], to: parts[1] }; // links from before Tokyo was added
+    return { city: null };
   }
-  window.addEventListener("hashchange", () => {
-    const h = readHash();
-    if (h) { state.from = h[0]; state.to = h[1]; state.example = false; combos.from.restore(); combos.to.restore(); replan(); }
-  });
+  function showHome() {
+    $("#home").hidden = false;
+    $("#planner").hidden = true;
+    document.title = "Interchange";
+    window.scrollTo(0, 0);
+  }
+  async function route() {
+    const r = parseHash();
+    if (!r.city) { showHome(); return; }
+    $("#home").hidden = true;
+    $("#planner").hidden = false;
+    let switched;
+    try { switched = await openCity(r.city); }
+    catch (err) {
+      $("#results").innerHTML = `<div class="error"><b>${esc(err.message)}</b><p>Check your connection and reload the page.</p></div>`;
+      return;
+    }
+    const valid = r.from && r.to && stationById.has(r.from) && stationById.has(r.to);
+    if (valid) { state.from = r.from; state.to = r.to; state.example = false; }
+    else if (switched || !state.from) { [state.from, state.to] = city.example; state.example = true; }
+    combos.from.restore(); combos.to.restore();
+    requestAnimationFrame(() => {
+      if (switched) fitAll(false);
+      replan({ animate: !switched });
+    });
+  }
+  window.addEventListener("hashchange", route);
 
   // ---------------------------------------------------------------- boot ---
-  const meta = N.meta || {};
-  $("#ver").textContent = `Map ${meta.systemMap || ""}`;
-  const sched = planner.scheduleFor(today);
-  $("#data-line").innerHTML = `Network: LTA system map ${esc(meta.systemMap || "")} (${esc(meta.systemMapFile || "")}), which includes Circle Line Stage 6. ` +
-    `Station positions and track lengths come from that map and the open sgraildata project. Fares: ${esc(sched.label)}. Data generated ${esc(meta.generated || "")}.`;
-
-  const h = readHash();
-  if (h) { state.from = h[0]; state.to = h[1]; }
-  else { [state.from, state.to] = DEFAULT_EXAMPLE; state.example = true; }
-  combos.from.restore(); combos.to.restore();
   $("#today-btn").hidden = true;
-
-  syncXferBtn();
-  drawMap();
-  bounds = computeBounds();
-  renderNotices();
-  renderGuide();
-  requestAnimationFrame(() => {
-    fitAll(false);
-    replan({ animate: false });
-  });
+  renderHome();
+  route();
 })();

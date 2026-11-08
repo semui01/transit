@@ -1,11 +1,11 @@
 {
-  "name": "sg-mrt-planner",
-  "version": "1.0.0",
+  "name": "interchange-metro-planner",
+  "version": "2.0.0",
   "private": true,
-  "description": "Singapore MRT/LRT journey planner: transfers, journey time and fares.",
+  "description": "Metro journey planner for Singapore and Tokyo: transfers, journey time and fares.",
   "scripts": {
-    "test": "node --test tests/planner.test.mjs",
-    "check-updates": "node tools/check-lta-updates.mjs",
+    "test": "node --test tests/singapore.test.mjs tests/tokyo.test.mjs",
+    "check-updates": "node tools/check-lta-updates.mjs; node tools/check-tokyo-updates.mjs",
     "start": "python3 -m http.server 8000"
   }
 }

@@ -7,7 +7,7 @@
  *   node tools/check-lta-updates.mjs --html page.html
  *   node tools/check-lta-updates.mjs --out report.md --json report.json
  *
- * What it compares with data/network.js
+ * What it compares with data/singapore/network.js
  *   - the system map PDF linked from the page (file name and "SM-yy-nn-EN" version)
  *   - every station code on the page and in the PDF (needs `pdftotext` from poppler-utils)
  *   - opening dates in the data that have now passed
@@ -35,8 +35,8 @@ function parseArgs(a) {
 }
 
 function loadNetwork() {
-  const src = readFileSync(join(ROOT, "data/network.js"), "utf8");
-  const json = src.slice(src.indexOf("{"), src.lastIndexOf("}") + 1);
+  const src = readFileSync(join(ROOT, "data/singapore/network.js"), "utf8");
+  const json = src.slice(src.indexOf("{", src.indexOf('["singapore/network"]')), src.lastIndexOf("}") + 1);
   return JSON.parse(json);
 }
 
@@ -140,7 +140,7 @@ async function main() {
     ...findings.map((f) => `- ${f}`),
     ...(notes.length ? ["", "## Notes", ...notes.map((n) => `- ${n}`)] : []),
     "",
-    findings.length ? "See README > Updating the network for how to refresh `data/network.js`." : "",
+    findings.length ? "See README > Updating the network for how to refresh `data/singapore/network.js`." : "",
   ].join("\n");
 
   console.log(report);

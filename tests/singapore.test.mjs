@@ -1,14 +1,14 @@
-// Run: node --test tests/planner.test.mjs   (or: npm test)
+// Singapore planner tests. Run all tests: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 globalThis.window = {};
-require("../data/network.js");
-require("../data/fares.js");
+require("../data/singapore/network.js");
+require("../data/singapore/fares.js");
 const MRTPlanner = require("../js/planner.js");
-const N = window.MRT_NETWORK, F = window.MRT_FARES;
+const N = window.MRT_DATA["singapore/network"], F = window.MRT_DATA["singapore/fares"];
 const at = (date) => MRTPlanner.create(N, F, { date });
 
 test("every code on every line belongs to a station with map position and label", () => {

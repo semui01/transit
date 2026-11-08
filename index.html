@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Singapore MRT Planner</title>
+<title>Interchange Metro Planner</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<meta name="description" content="Plan MRT and LRT journeys in Singapore: where to change lines, how long it takes and what it costs.">
+<meta name="description" content="Plan metro journeys in Singapore and Tokyo: where to change lines, how long it takes and what it costs.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600&family=Public+Sans:wght@400;500;600;700&family=Schibsted+Grotesk:wght@600;700;800&display=swap">
@@ -75,7 +75,10 @@ button, input { font: inherit; color: inherit; }
 .sec { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: 20px; min-width: 0; }
 
 /* header */
-.brand { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.brand { display: flex; flex-direction: column; gap: 6px; }
+.brand-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.back { font-size: var(--step--1); font-weight: 600; color: var(--muted); text-decoration: none; width: fit-content; display: inline-flex; gap: 6px; align-items: center; }
+.back:hover { color: var(--ink); }
 .brand h1 { font-family: var(--font-display); font-weight: 800; font-size: var(--step-2); letter-spacing: -0.01em; line-height: 1.1; margin: 0; display: flex; align-items: center; gap: 10px; text-wrap: balance; }
 .brand h1 .mark { display: inline-grid; grid-template-columns: repeat(3, 6px); gap: 2px; }
 .brand h1 .mark i { width: 6px; height: 18px; border-radius: 3px; display: block; }
@@ -95,7 +98,7 @@ button, input { font: inherit; color: inherit; }
 .combo li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 7px; cursor: pointer; }
 .combo li[aria-selected="true"], .combo li:hover { background: var(--surface-2); }
 .combo li .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.combo li .soon { font-size: var(--step--1); color: var(--muted); }
+.combo li .soon, .combo li .ln { font-size: var(--step--1); color: var(--muted); }
 .swap { width: 40px; height: 40px; border-radius: 50%; border: 1.5px solid var(--rule); background: var(--surface); cursor: pointer; display: grid; place-items: center; margin-bottom: 26px; }
 .swap:hover { background: var(--surface-2); }
 .swap svg { width: 18px; height: 18px; }
@@ -184,6 +187,9 @@ button, input { font: inherit; color: inherit; }
 #map .stn { fill: var(--station-fill); }
 #map .lbl { font-family: var(--font-map); font-weight: 500; fill: var(--map-label); paint-order: stroke; stroke: var(--map-bg); stroke-width: 1.6px; stroke-linejoin: round; }
 #map .lbl.soon { fill: var(--muted); font-style: italic; }
+#map.lod-far .lbl.minor { display: none; }
+#map .walk { fill: none; stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 1.4 2; stroke-linecap: round; }
+#map .walk.on-route { stroke: var(--ink); stroke-width: 2.4; stroke-dasharray: 2 2.6; }
 #map [data-st] { cursor: pointer; }
 #map .hit { fill: transparent; }
 #map .base { transition: opacity .25s; }
@@ -206,6 +212,32 @@ button, input { font: inherit; color: inherit; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .legend i { width: 18px; height: 4px; border-radius: 2px; background: var(--c); display: inline-block; }
 .legend i.dash { background: repeating-linear-gradient(90deg, var(--muted) 0 4px, transparent 4px 7px); }
+.legend i.dot { height: 2px; background: repeating-linear-gradient(90deg, var(--muted) 0 2px, transparent 2px 5px); }
+.ofare { color: var(--ink); font-weight: 700; }
+.steps .walk:empty { height: 14px; padding: 0; }
+
+/* home */
+.home { min-height: 100%; background: var(--bg); }
+.home-in { max-width: 1000px; margin: 0 auto; padding-block: clamp(28px, 6vw, 64px) 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 28px; }
+.eyebrow { margin: 0; font-size: var(--step--1); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 10px; }
+.eyebrow .mark { display: inline-grid; grid-template-columns: repeat(3, 5px); gap: 2px; }
+.eyebrow .mark i { width: 5px; height: 14px; border-radius: 3px; display: block; }
+.home-title { font: 800 clamp(2.6rem, 7vw, 4.25rem)/1 var(--font-display); letter-spacing: -0.025em; margin: 10px 0 14px; text-wrap: balance; }
+.lead { font-size: var(--step-1); max-width: 56ch; margin: 0; line-height: 1.45; }
+.cities { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; }
+.city { display: flex; flex-direction: column; gap: 4px; padding: 0 20px 20px; border-radius: 14px; background: var(--surface); border: 1.5px solid var(--rule); color: inherit; text-decoration: none; overflow: hidden; transition: border-color .15s, transform .15s; min-width: 0; }
+a.city:hover { border-color: var(--ink); transform: translateY(-2px); }
+.city .stripes { display: flex; height: 8px; margin: 0 -20px 16px; }
+.city .stripes i { flex: 1; }
+.cname { font: 800 var(--step-3)/1.05 var(--font-display); letter-spacing: -0.015em; }
+.clocal { color: var(--muted); }
+.csys { font-weight: 700; margin-top: 10px; }
+.csum { color: var(--muted); font-size: var(--step--1); line-height: 1.5; }
+.cgo { margin-top: auto; padding-top: 14px; font-weight: 700; }
+.soon-card { border-style: dashed; background: transparent; padding-top: 20px; justify-content: center; }
+.soon-card .cname { font-size: var(--step-2); color: var(--muted); }
+.home-foot { font-size: var(--step--1); color: var(--muted); margin: 0; max-width: 72ch; }
+@media (prefers-reduced-motion: reduce) { a.city { transition: none; } a.city:hover { transform: none; } }
 .popup { position: absolute; z-index: 20; transform: translate(-50%, calc(-100% - 14px)); background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); box-shadow: 0 12px 32px rgb(0 0 0 / 0.2); padding: 10px 12px; min-width: 200px; max-width: 290px; }
 .popup::after { content: ""; position: absolute; left: 50%; bottom: -7px; width: 12px; height: 12px; background: var(--surface); border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); transform: translateX(-50%) rotate(45deg); }
 .popup.below::after { top: -7px; bottom: auto; transform: translateX(-50%) rotate(225deg); }
@@ -277,12 +309,27 @@ button, input { font: inherit; color: inherit; }
 </style>
 </head>
 <body>
-<div class="app">
+<main class="home" id="home" hidden>
+  <div class="home-in">
+    <header>
+      <p class="eyebrow"><span class="mark" aria-hidden="true"><i style="background:#D42E12"></i><i style="background:#FF9500"></i><i style="background:#009BBF"></i></span>Metro journey planner</p>
+      <h1 class="home-title">Interchange</h1>
+      <p class="lead">Pick a city, then type or tap your start and destination. You'll see where to change trains, how long the trip takes and what it costs, with every sensible route and one suggestion.</p>
+    </header>
+    <div class="cities" id="city-cards"></div>
+    <p class="home-foot">Station data from LTA, Tokyo Metro, Toei, and the open sgraildata and Mini Tokyo 3D projects. Times and fares are estimates; check with the operator before you travel.</p>
+  </div>
+</main>
+
+<div class="app" id="planner" hidden>
   <div class="panel">
     <div class="sec top">
       <div class="brand">
-        <h1><span class="mark" aria-hidden="true"><i style="background:#D42E12"></i><i style="background:#009645"></i><i style="background:#FA9E0D"></i></span>Singapore MRT Planner</h1>
-        <span class="ver" id="ver"></span>
+        <a class="back" href="#"><span aria-hidden="true">←</span> All cities</a>
+        <div class="brand-row">
+          <h1><span class="mark" id="city-mark" aria-hidden="true"></span><span id="city-title"></span></h1>
+          <span class="ver" id="ver"></span>
+        </div>
       </div>
 
       <form class="search" id="search" autocomplete="off">
@@ -327,18 +374,14 @@ button, input { font: inherit; color: inherit; }
 
     <section class="sec about" id="about">
       <h2>About this planner</h2>
-      <p>Journey times are estimates from track distance plus typical stop and transfer times. Transfer times on the map count walking between platforms and the average wait for the next train. Allow a few extra minutes to wait for your first train. Fares are adult card fares; student, senior and concession fares are lower.</p>
-      <p id="data-line"></p>
-      <h2>Keeping it up to date</h2>
-      <ul>
-        <li>Stations with an announced opening date switch on by themselves on that date. Bedok South, Sungei Bedok and Xilin are already loaded for 26 Dec 2026, and so is the fare change on the same day.</li>
-        <li>A weekly check compares this planner with the <a href="https://www.lta.gov.sg/content/ltagov/en/getting_around/public_transport/rail_network.html" target="_blank" rel="noopener">LTA rail network page</a> and its system map, and flags new stations or a new map version so the data can be refreshed.</li>
-      </ul>
+      <p>Journey times are estimates from track distance plus typical stop and transfer times. Transfer times on the map count walking between platforms and the average wait for the next train. Allow a few extra minutes to wait for your first train. Fares are adult fares; child, student, senior and concession fares are lower.</p>
+      <h2>Data and updates</h2>
+      <div id="about-city"></div>
     </section>
   </div>
 
   <div class="mapwrap" id="mapwrap">
-    <svg id="map" role="img" aria-label="Singapore MRT and LRT network map. Select a station to start or end your journey there."></svg>
+    <svg id="map" role="img" aria-label="Network map. Select a station to start or end your journey there."></svg>
     <div class="map-top">
       <button type="button" class="toggle" id="xfer-toggle" aria-pressed="true"><span class="sw" aria-hidden="true"></span>Transfer times</button>
       <div class="map-hint" id="map-hint">Tap a station to start or end there</div>
@@ -355,8 +398,7 @@ button, input { font: inherit; color: inherit; }
   </div>
 </div>
 
-<script src="data/network.js"></script>
-<script src="data/fares.js"></script>
+<script src="data/cities.js"></script>
 <script src="js/planner.js"></script>
 <script src="js/app.js"></script>
 </body>

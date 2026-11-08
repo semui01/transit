@@ -15,8 +15,11 @@
  * The app picks the schedule whose `effective` date is the latest one on or
  * before the travel date, so an announced fare change switches on by itself.
  */
-window.MRT_FARES = {
+window.MRT_DATA = window.MRT_DATA || {};
+window.MRT_DATA["singapore/fares"] = {
+  model: "shortest-distance",
   currency: "SGD",
+  minorUnits: 2,
   officialCalculator: "https://www.lta.gov.sg/content/ltagov/en/getting_around/public_transport/fares_and_payment.html",
   schedules: [
     {
