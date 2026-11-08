@@ -1,0 +1,6 @@
+/* The planner's own typefaces (index.html: --font-display, --font-body, --font-map), from github.com/google/fonts (SIL OFL 1.1). */
+@font-face { font-family: "Schibsted Grotesk"; src: url("SchibstedGrotesk-wght.ttf") format("truetype"); font-weight: 400 900; font-style: normal; }
+@font-face { font-family: "Public Sans"; src: url("PublicSans-wght.ttf") format("truetype"); font-weight: 100 900; font-style: normal; }
+@font-face { font-family: "Barlow Semi Condensed"; src: url("BarlowSemiCondensed-Medium.ttf") format("truetype"); font-weight: 500; font-style: normal; }
+@font-face { font-family: "Barlow Semi Condensed"; src: url("BarlowSemiCondensed-SemiBold.ttf") format("truetype"); font-weight: 600; font-style: normal; }
+@font-face { font-family: "Barlow Semi Condensed"; src: url("BarlowSemiCondensed-Bold.ttf") format("truetype"); font-weight: 700; font-style: normal; }

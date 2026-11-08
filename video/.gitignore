@@ -1,0 +1,8 @@
+# Render scratch: frames, soundtrack and cue exports belong outside the repo
+frames/
+*.wav
+cues.json
+# Review artifacts that build.sh writes next to the MP4
+out/*-sheet.jpg
+out/*-transitions.jpg
+out/*-spec.png

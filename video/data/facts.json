@@ -1,0 +1,334 @@
+{
+  "count": {
+    "stations": 187,
+    "openToday": 184,
+    "mrtLines": 6,
+    "lrtSystems": 3,
+    "interchanges": 30,
+    "levels": {
+      "quick": 5,
+      "moderate": 15,
+      "long": 7,
+      "verylong": 3
+    }
+  },
+  "journey": {
+    "from": "jurong-east",
+    "to": "changi-airport",
+    "fromName": "Jurong East",
+    "toName": "Changi Airport",
+    "fare": {
+      "km": 32.4,
+      "adultCents": 249,
+      "earlyCents": 199,
+      "schedule": {
+        "id": "2025-12",
+        "label": "Fares from 27 Dec 2025",
+        "effective": "2025-12-27"
+      },
+      "estimate": true,
+      "next": {
+        "label": "Fares from 26 Dec 2026",
+        "effective": "2026-12-26",
+        "adultCents": 262
+      }
+    },
+    "options": [
+      {
+        "lines": [
+          "EW",
+          "CG"
+        ],
+        "totalMin": 53,
+        "rideMin": 50,
+        "transferMin": 3,
+        "nTransfers": 1,
+        "nStops": 22,
+        "km": 34.5,
+        "tags": [
+          "suggested",
+          "fastest",
+          "fewest-transfers"
+        ],
+        "legs": [
+          {
+            "line": "EW",
+            "short": "EWL",
+            "color": "#009645",
+            "codes": [
+              "EW24",
+              "EW23",
+              "EW22",
+              "EW21",
+              "EW20",
+              "EW19",
+              "EW18",
+              "EW17",
+              "EW16",
+              "EW15",
+              "EW14",
+              "EW13",
+              "EW12",
+              "EW11",
+              "EW10",
+              "EW9",
+              "EW8",
+              "EW7",
+              "EW6",
+              "EW5",
+              "EW4"
+            ],
+            "from": "jurong-east",
+            "to": "tanah-merah",
+            "nStops": 20,
+            "min": 42.14,
+            "km": 28.04,
+            "towards": "pasir-ris"
+          },
+          {
+            "line": "CG",
+            "short": "EWL (CG)",
+            "color": "#009645",
+            "codes": [
+              "CG",
+              "CG1",
+              "CG2"
+            ],
+            "from": "tanah-merah",
+            "to": "changi-airport",
+            "nStops": 2,
+            "min": 7.72,
+            "km": 6.43,
+            "towards": "changi-airport"
+          }
+        ],
+        "transfers": [
+          {
+            "station": "tanah-merah",
+            "name": "Tanah Merah",
+            "fromLine": "EW",
+            "toLine": "CG",
+            "min": 3,
+            "level": "quick",
+            "tapOut": false,
+            "fromCode": "EW4",
+            "toCode": "CG",
+            "note": "Short change within the station to the Changi Airport branch."
+          }
+        ]
+      }
+    ],
+    "more": [
+      {
+        "lines": [
+          "EW",
+          "CC",
+          "DT",
+          "CG"
+        ],
+        "totalMin": 68,
+        "nTransfers": 3
+      },
+      {
+        "lines": [
+          "EW",
+          "NE",
+          "DT",
+          "CG"
+        ],
+        "totalMin": 71,
+        "nTransfers": 3
+      },
+      {
+        "lines": [
+          "EW",
+          "DT",
+          "CG"
+        ],
+        "totalMin": 72,
+        "nTransfers": 2
+      },
+      {
+        "lines": [
+          "NS",
+          "CC",
+          "EW",
+          "CG"
+        ],
+        "totalMin": 82,
+        "nTransfers": 3
+      },
+      {
+        "lines": [
+          "NS",
+          "CC",
+          "DT",
+          "CG"
+        ],
+        "totalMin": 89,
+        "nTransfers": 3
+      },
+      {
+        "lines": [
+          "NS",
+          "EW",
+          "CG"
+        ],
+        "totalMin": 89,
+        "nTransfers": 2
+      },
+      {
+        "lines": [
+          "EW",
+          "NS",
+          "DT",
+          "CG"
+        ],
+        "totalMin": 96,
+        "nTransfers": 3
+      },
+      {
+        "lines": [
+          "NS",
+          "DT",
+          "EW",
+          "CG"
+        ],
+        "totalMin": 98,
+        "nTransfers": 3
+      }
+    ]
+  },
+  "fareOpenDay": {
+    "km": 32.4,
+    "adultCents": 262,
+    "earlyCents": 212,
+    "schedule": {
+      "id": "2026-12",
+      "label": "Fares from 26 Dec 2026",
+      "effective": "2026-12-26"
+    },
+    "estimate": true
+  },
+  "opening": [
+    {
+      "id": "bedok-south",
+      "name": "Bedok South",
+      "opens": "2026-12-26",
+      "codes": [
+        "TE30"
+      ]
+    },
+    {
+      "id": "sungei-bedok",
+      "name": "Sungei Bedok",
+      "opens": "2026-12-26",
+      "codes": [
+        "TE31",
+        "DT37"
+      ]
+    },
+    {
+      "id": "xilin",
+      "name": "Xilin",
+      "opens": "2026-12-26",
+      "codes": [
+        "DT36"
+      ]
+    }
+  ],
+  "guideQuick": [
+    {
+      "station": "bayfront",
+      "name": "Bayfront",
+      "a": "CC34",
+      "b": "DT16",
+      "min": 3,
+      "level": "quick",
+      "tapOut": false
+    },
+    {
+      "station": "city-hall",
+      "name": "City Hall",
+      "a": "NS25",
+      "b": "EW13",
+      "min": 3,
+      "level": "quick",
+      "tapOut": false
+    },
+    {
+      "station": "jurong-east",
+      "name": "Jurong East",
+      "a": "NS1",
+      "b": "EW24",
+      "min": 3,
+      "level": "quick",
+      "tapOut": false
+    },
+    {
+      "station": "punggol",
+      "name": "Punggol",
+      "a": "PTC",
+      "b": "PTC",
+      "min": 3,
+      "level": "quick",
+      "tapOut": false
+    },
+    {
+      "station": "raffles-place",
+      "name": "Raffles Place",
+      "a": "NS26",
+      "b": "EW14",
+      "min": 3,
+      "level": "quick",
+      "tapOut": false
+    },
+    {
+      "station": "sengkang",
+      "name": "Sengkang",
+      "a": "STC",
+      "b": "STC",
+      "min": 3,
+      "level": "quick",
+      "tapOut": false
+    },
+    {
+      "station": "tanah-merah",
+      "name": "Tanah Merah",
+      "a": "EW4",
+      "b": "CG",
+      "min": 3,
+      "level": "quick",
+      "tapOut": false
+    }
+  ],
+  "guideVeryLong": [
+    {
+      "station": "outram-park",
+      "name": "Outram Park",
+      "a": "EW16",
+      "b": "TE17",
+      "min": 8,
+      "level": "verylong",
+      "tapOut": false
+    },
+    {
+      "station": "newton",
+      "name": "Newton",
+      "a": "NS21",
+      "b": "DT11",
+      "min": 9,
+      "level": "verylong",
+      "tapOut": true
+    },
+    {
+      "station": "tampines",
+      "name": "Tampines",
+      "a": "EW2",
+      "b": "DT32",
+      "min": 9,
+      "level": "verylong",
+      "tapOut": true
+    }
+  ]
+}

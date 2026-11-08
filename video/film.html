@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Singapore MRT Planner · explainer film</title>
+<link rel="stylesheet" href="fonts/fonts.css">
+<style>
+/* Preview shell only. The film is one canvas; ?render switches to frame-by-frame capture. */
+html,body{margin:0;height:100%;background:#0E1412;color:#98A7A0;font:13px/1.4 ui-monospace,monospace}
+body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
+canvas{width:min(96vw,calc((100vh - 64px)*var(--ar,1.7778)));aspect-ratio:var(--ar,1.7778);display:block}
+.ctl{display:flex;gap:12px;align-items:center;width:min(96vw,calc((100vh - 64px)*var(--ar,1.7778)))}
+.ctl input{flex:1}
+.ctl button{font:inherit;color:#E5EDE9;background:#151D1A;border:1px solid #2A3631;border-radius:6px;padding:4px 10px;cursor:pointer}
+body.render{display:block} body.render .ctl{display:none} body.render canvas{width:auto;aspect-ratio:auto}
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="Singapore MRT Planner explainer"></canvas>
+<div class="ctl"><button id="pp">Pause</button><input id="scrub" type="range" min="0" max="10" step="0.001" value="0"><span id="tc">0.00 s</span></div>
+<script src="engine.js"></script>
+<script src="data.js"></script>
+<script>
+/* Singapore MRT Planner (semui01.github.io/transit), a one-world film: one camera moves over the
+   planner's own network map. Every number on screen comes from data.js, which data/prepare.mjs
+   computed with the planner's own engine (js/planner.js) and data (data/network.js, data/fares.js). */
+(() => {
+'use strict';
+const {clamp, lerp, prog, E, rgba, cam, rrect, solveTime} = M;
+const D = window.DATA;
+
+/* 1. Palette and type: the planner's light theme (index.html :root) and its three typefaces. */
+const C = {bg:'#F9FBFA', page:'#EDF1EF', surface:'#FFFFFF', surface2:'#F4F7F5', ink:'#15201B', muted:'#5B6963', rule:'#D6DEDA',
+  signal:'#F3C433', signalInk:'#2E2500', focus:'#1D5FD1'};
+const LV = {quick:{bg:'#DDF3E5', fg:'#0B5A31', label:'Quick change'}, moderate:{bg:'#FFF0C4', fg:'#5C4400', label:'Short walk'},
+  long:{bg:'#FFDCC6', fg:'#7E2D00', label:'Long walk'}, verylong:{bg:'#F8CFCF', fg:'#8A1212', label:'Very long'}};
+Object.assign(T, {DISP:'"Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif', BODY:'"Public Sans", system-ui, sans-serif',
+  MONO:'"Barlow Semi Condensed", "Arial Narrow", sans-serif', fg:C.ink, muted:C.muted, faint:'#A3AFA9', calloutPx:26, calloutSubPx:24});
+const W = 1920, H = 1080, DUR = 25;
+const film = Film.create({W, H, FPS:60, DUR, bg:C.bg, grain:.05, vignette:.1, fadeIn:0});
+const FD = s => `800 ${s}px ${T.DISP}`, FB = (w, s) => `${w} ${s}px ${T.BODY}`, FM = (w, s) => `${w} ${s}px ${T.MONO}`;
+
+/* 2. Master timing (120 BPM grid: beat = 0.5 s; scene cuts sit on beats). */
+const TM = {
+  // 1 · the network draws itself
+  brand:.25, h1:.45, h1out:2.6,
+  // 2 · where to change: Jurong East → Changi Airport (the planner's default example)
+  s2:3.0, pinA:3.0, pinB:3.2, dim:[3.0, 3.45], h2:3.1, dep:3.65, arr1:4.8, xfer:4.85, co:4.9, dep2:5.4, arr2:5.9, h2out:6.3,
+  // 3 · how long it takes
+  pull:[6.45, 7.35], h3:6.7, bar0:7.05, bar1:8.1, lab1:7.4, lab2:7.75, h3out:9.2,
+  // 4 · what it costs
+  h4:9.65, fare:9.95, sub4:10.45, alt1:11.0, alt2:11.85, h4out:12.85,
+  // 5 · every transfer, timed
+  zoom:[13.0, 13.85], h5:13.25, pills:[13.65, 14.55], legend:13.7, co1:14.55, co2:14.85, h5out:16.75,
+  // 6 · openings switch on by themselves
+  pan:[16.9, 17.75], h6:17.15, date0:17.75, date1:18.85, on:18.9, names:18.95, h6out:20.25,
+  // 7 · end card: three lines retract and fly into the planner's mark
+  back:[20.2, 20.9], gather:[20.8, 21.55], title:21.45, sub:21.7, url:22.0,
+};
+film.blur = [[TM.pull[0], TM.pull[1], 10], [TM.zoom[0], TM.zoom[1], 12], [TM.pan[0], TM.pan[1], 10], [TM.back[0], TM.gather[1] + .15, 12]];
+
+/* 3. Precomputed geometry (map units of the LTA system map layout, viewBox 1123 × 899). */
+const STN = new Map(D.stations.map(s => [s.id, s]));
+const byCode = new Map(); D.stations.forEach(s => s.codes.forEach(c => byCode.set(c, s)));
+const posOf = c => { const s = byCode.get(c); return (s.badges && s.badges[c]) || [s.x, s.y]; };   // app.js pos()
+const lineOf = c => { const p = (c.match(/^[A-Z]+/) || [''])[0]; return D.lines[{STC:'SE', PTC:'PE'}[p] || p]; };
+function geom(pts) { const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])); return {pts, cum, len: cum[cum.length - 1]}; }
+const LINES = Object.entries(D.lines).map(([id, L]) => ({id, ...L, paths: L.paths.map((p, pi) => {
+  const g = geom(p.pts), runs = [];
+  for (let i = 0; i < p.pts.length - 1; i++) {
+    const soon = p.soon[i] || p.soon[i + 1], last = runs[runs.length - 1];
+    if (last && last.soon === soon) last.b = g.cum[i + 1]; else runs.push({soon, a: g.cum[i], b: g.cum[i + 1]});
+  }
+  return {...g, codes: p.codes, runs, pi};
+})}));
+const DRAW = LINES.filter(L => L.kind === 'LRT').concat(LINES.filter(L => L.kind !== 'LRT'));   // app draws LRT under MRT
+function trace(ctx, g, a, b) {
+  ctx.beginPath(); let on = false;
+  for (let i = 0; i < g.pts.length - 1; i++) {
+    const s0 = g.cum[i], s1 = g.cum[i + 1]; if (s1 < a) continue; if (s0 > b) break;
+    const sl = (s1 - s0) || 1e-9, u0 = clamp((a - s0) / sl), u1 = clamp((b - s0) / sl), p = g.pts[i], q = g.pts[i + 1];
+    if (!on) { ctx.moveTo(lerp(p[0], q[0], u0), lerp(p[1], q[1], u0)); on = true; }
+    ctx.lineTo(lerp(p[0], q[0], u1), lerp(p[1], q[1], u1));
+  }
+}
+function at(g, s) { s = clamp(s, 0, g.len); let i = 0; while (i < g.cum.length - 2 && g.cum[i + 1] < s) i++; const u = (s - g.cum[i]) / ((g.cum[i + 1] - g.cum[i]) || 1e-9); return [lerp(g.pts[i][0], g.pts[i + 1][0], u), lerp(g.pts[i][1], g.pts[i + 1][1], u)]; }
+const LW = s => Math.pow(s / 1.2, -.42);   // strokes thin a little as the camera zooms in, so close-ups stay crisp
+
+// Opening: each line shoots out from its first station (fast start, so frame one already moves); stations pop as it passes.
+const GROW = {NS:[0, .95], EW:[.04, 1.05], CG:[.8, 1.05], NE:[.12, .95], CC:[.16, 1.15], DT:[.2, 1.2], TE:[.24, 1.25], BP:[.6, 1.1], SE:[.66, 1.15], SW:[.66, 1.15], PE:[.7, 1.2], PW:[.7, 1.2]};
+const win = (L, p) => { const [a, b] = GROW[L.id]; return p.pi === 0 ? [a, b] : [b - .08, b + .2]; };
+const growE = x => 1 - Math.pow(1 - x, 2.2);
+const grown = (L, p, t) => p.len * growE(prog(t, ...win(L, p)));
+const appear = new Map();
+for (const L of LINES) for (const p of L.paths) p.codes.forEach((c, i) => {
+  const s = byCode.get(c).id, [a, b] = win(L, p), tc = i === 0 ? a : solveTime(t => grown(L, p, t), p.cum[i] - 1e-6, a, b);
+  if (!appear.has(s) || tc < appear.get(s)) appear.set(s, tc);
+});
+
+// Journeys: the suggested route and two slower ones, as the planner returns them.
+const J = D.journey;
+function route(o) {   // legs joined by the walk inside each interchange (badge to badge)
+  const parts = []; let s0 = 0;
+  o.legs.forEach((l, i) => {
+    if (i) { const g = geom([posOf(o.legs[i - 1].codes.at(-1)), posOf(l.codes[0])]); parts.push({walk:true, g, s0, color:C.ink}); s0 += g.len; }
+    const g = geom(l.codes.map(posOf)); parts.push({walk:false, g, s0, color:l.color, codes:l.codes}); s0 += g.len;
+  });
+  return {parts, len: s0, o};
+}
+const R0 = route(J.options[0]);
+const ALTS = J.more.filter(o => !o.transfers.some(x => x.tapOut)).slice(0, 2).map(route);   // no tap-out routes: their fare rule needs a footnote
+const A = STN.get(J.from), B = STN.get(J.to), XF = J.options[0].transfers[0], XS = STN.get(XF.station);
+const legEnd = R0.parts[0].g.len, walkEnd = legEnd + R0.parts[1].g.len;
+const trainS = t => t < TM.arr1 ? legEnd * E.inOutCubic(prog(t, TM.dep, TM.arr1))
+  : t < TM.dep2 ? legEnd + (walkEnd - legEnd) * E.inOutSine(prog(t, TM.arr1 + .05, TM.dep2 - .05))
+  : walkEnd + (R0.len - walkEnd) * E.inOutCubic(prog(t, TM.dep2, TM.arr2));
+const routeAt = (R, s) => { let p = R.parts[0]; for (const q of R.parts) if (s >= q.s0) p = q; return at(p.g, s - p.s0); };
+
+// Transfer pills in the city core, and the two the callouts name.
+const PILLS = D.pills;
+const pillT = new Map(PILLS.map(p => [p.id, TM.pills[0] + (TM.pills[1] - TM.pills[0]) * clamp((p.x - 440) / 300)]));   // a sweep from west to east
+const inView = q => q.x >= 820 && q.x <= W - 70 && q.y >= 44 && q.y <= H - 44;
+const QUICK = STN.get('city-hall'), LONG = STN.get('outram-park');
+const OPEN = D.opening.map(o => STN.get(o.id));
+
+/* Camera: one path over the whole film. full = the network beside the text column. */
+const VIEW = {full:{fx:570.7, fy:543.7, s:1.18, ax:1300, ay:545}, east:{fx:968, fy:574, s:3.6, ax:1540, ay:650},
+  core:{fx:592, fy:690, s:3.12, ax:1312, ay:552}, xfer:{fx:932.7, fy:528, s:2.45, ax:1240, ay:575}};
+const camAt = cam.path([
+  {t:0, ...VIEW.full, s:1.08}, {t:2.9, ...VIEW.full},
+  {t:TM.dep, ...VIEW.full}, {t:TM.arr1, ...VIEW.xfer}, {t:TM.arr2 + .1, ...VIEW.xfer, fx:968, fy:536},
+  {t:TM.pull[0], ...VIEW.xfer, fx:975, fy:536}, {t:TM.pull[1], ...VIEW.full},
+  {t:TM.zoom[0], ...VIEW.full, s:1.21}, {t:TM.zoom[1], ...VIEW.core},
+  {t:TM.pan[0], ...VIEW.core, s:3.2}, {t:TM.pan[1], ...VIEW.east},
+  {t:TM.back[0], ...VIEW.east, s:3.72}, {t:TM.back[1], ...VIEW.full}, {t:DUR, ...VIEW.full, s:1.21},
+], W, H);
+const S = (c, x, y) => cam.point(c, x, y);
+
+/* 4. Drawing helpers. */
+function drawNet(ctx, c, t, o) {   // the network as the app draws it (app.js drawMap), in map units
+  ctx.save(); cam.apply(ctx, c); const k = LW(c.s); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const on = o.on || 0;
+  for (const L of DRAW) {
+    const a0 = o.alpha * (o.lineAlpha ? o.lineAlpha(L) : 1); if (a0 <= .003) continue;
+    for (const p of L.paths) {
+      const rev = o.grow ? grown(L, p, t) : p.len; if (rev <= 0) continue;
+      ctx.strokeStyle = L.color; ctx.lineWidth = (L.kind === 'LRT' ? 2.4 : 3.6) * k;
+      for (const r of p.runs) {
+        if (r.a >= rev) continue; const b = Math.min(r.b, rev);
+        if (!r.soon) { ctx.globalAlpha = a0; trace(ctx, p, r.a, b); ctx.stroke(); continue; }
+        // not open yet: dashed (app .ln.soon); on opening day it fills in solid from the existing line
+        if (on < 1) { ctx.globalAlpha = a0 * .7 * (1 - E.inQuad(on)); ctx.lineCap = 'butt'; ctx.setLineDash([3.4 * k, 3.4 * k]); trace(ctx, p, r.a, b); ctx.stroke(); ctx.setLineDash([]); ctx.lineCap = 'round'; }
+        if (on > 0) { ctx.globalAlpha = a0; const fwd = p.codes.indexOf('DT35') >= 0 || p.codes.indexOf('TE29') >= 0;   // fill from the open end
+          if (fwd) trace(ctx, p, r.a, lerp(r.a, b, E.inOutCubic(on))); else trace(ctx, p, lerp(b, r.a, E.inOutCubic(on)), b); ctx.stroke(); }
+      }
+    }
+  }
+  const sa = o.alpha * (o.stationAlpha ?? 1);
+  if (sa > .003) for (const s of D.stations) {
+    const ta = appear.get(s.id) ?? 0, pq = o.grow ? prog(t, ta, ta + .22) : 1; if (pq <= 0) continue;
+    const sc = E.outBack(pq), soon = !s.open, lit = soon ? E.outCubic(prog(on, .55, 1)) : 1;
+    ctx.save(); ctx.globalAlpha = sa; ctx.translate(s.x, s.y); ctx.scale(sc, sc); ctx.translate(-s.x, -s.y);
+    const pts = s.badges ? Object.values(s.badges).sort((a, b) => a[0] - b[0] || a[1] - b[1]) : null;
+    if (pts && pts.length > 1) {
+      ctx.beginPath(); pts.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]));
+      ctx.strokeStyle = soon ? M.mix(C.muted, C.ink, lit) : C.ink; ctx.lineWidth = 8 * k; if (soon && lit < 1) ctx.setLineDash([2 * k, 1.6 * k]); ctx.stroke(); ctx.setLineDash([]);
+      ctx.strokeStyle = C.surface; ctx.lineWidth = 5.4 * k; ctx.stroke();
+    } else {
+      const L = lineOf(s.codes[0]); ctx.beginPath(); ctx.arc(s.x, s.y, (L.kind === 'LRT' ? 1.9 : 2.5) * Math.sqrt(k), 0, 7);
+      ctx.fillStyle = C.surface; ctx.fill(); ctx.lineWidth = 1.5 * k;
+      if (soon && lit < 1) { ctx.strokeStyle = C.muted; ctx.setLineDash([1.4 * k, 1 * k]); ctx.stroke(); ctx.setLineDash([]); }
+      if (!soon || lit > 0) { ctx.globalAlpha *= soon ? lit : 1; ctx.strokeStyle = L.color; ctx.stroke(); }
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+function drawRoute(ctx, c, R, s1, a, s0 = 0) {   // highlighted route (app.js drawRoute): bg casing + line colour; dots at stops passed
+  if (a <= .003 || s1 <= s0) return; ctx.save(); cam.apply(ctx, c); const k = LW(c.s); ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.globalAlpha = a;
+  for (const pass of [0, 1]) for (const q of R.parts) {
+    const a0 = Math.max(0, s0 - q.s0), b = Math.min(q.g.len, s1 - q.s0); if (b <= a0) continue;
+    if (q.walk) { if (pass) { ctx.strokeStyle = C.ink; ctx.lineWidth = 2.2 * k; ctx.setLineDash([.1, 3.2 * k]); trace(ctx, q.g, a0, b); ctx.stroke(); ctx.setLineDash([]); } continue; }
+    ctx.strokeStyle = pass ? q.color : C.bg; ctx.lineWidth = (pass ? 5.6 : 9) * k; trace(ctx, q.g, a0, b); ctx.stroke();
+  }
+  for (const q of R.parts) if (!q.walk) q.codes.forEach((cd, i) => {
+    if (i === 0 || i === q.codes.length - 1 || q.s0 + q.g.cum[i] > s1 || q.s0 + q.g.cum[i] < s0) return;
+    const [x, y] = q.g.pts[i]; ctx.beginPath(); ctx.arc(x, y, 1.8 * Math.sqrt(k), 0, 7); ctx.fillStyle = C.surface; ctx.fill(); ctx.strokeStyle = q.color; ctx.lineWidth = 1.2 * k; ctx.stroke();
+  });
+  ctx.restore();
+}
+function pin(ctx, x, y, letter, kind, p) {   // A = ink, B = platform-edge yellow (app .pin-a / .pin-b)
+  if (p <= 0) return; const q = E.outBack(clamp(p)), r = 17 * q, yy = y - (1 - E.outCubic(clamp(p))) * 46;
+  ctx.save(); ctx.globalAlpha *= clamp(p * 3);
+  ctx.fillStyle = 'rgba(21,32,27,.18)'; ctx.beginPath(); ctx.ellipse(x, y + 3, r * .9, r * .45, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(x, yy, r, 0, 7); ctx.fillStyle = kind === 'a' ? C.ink : C.signal; ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = kind === 'a' ? C.bg : C.signalInk; ctx.stroke();
+  if (q > .6) T.label(ctx, letter, x, yy + 7.5, `700 21px ${T.DISP}`, kind === 'a' ? C.bg : C.signalInk, clamp((q - .6) / .3), 'center');
+  ctx.restore();
+}
+const MC = document.createElement('canvas').getContext('2d');   // measuring only
+function pillW(text, size) { T.setFont(MC, FM(600, size)); return MC.measureText(text).width + size * .9; }
+function pill(ctx, x, y, text, level, tapOut, p, size = 22) {   // transfer-time pill (app .xp / .lvl)
+  if (p <= 0) return; const lv = LV[level], q = E.outBack(clamp(p)), w = pillW(text, size), h = size * 1.42;
+  ctx.save(); ctx.translate(x, y); ctx.scale(q, q); ctx.globalAlpha *= clamp(p * 2.5);
+  ctx.fillStyle = 'rgba(21,32,27,.12)'; rrect(ctx, -w / 2, -h / 2 + 2.5, w, h, h / 2); ctx.fill();
+  ctx.fillStyle = lv.bg; rrect(ctx, -w / 2, -h / 2, w, h, h / 2); ctx.fill();
+  ctx.strokeStyle = lv.fg; ctx.lineWidth = 1.8; if (tapOut) ctx.setLineDash([4, 3]); ctx.stroke(); ctx.setLineDash([]);
+  T.label(ctx, text, 0, size * .36, FM(600, size), lv.fg, clamp((p - .35) / .35), 'center');
+  ctx.restore();
+}
+function co(ctx, ax, ay, lx, ly, p, title, sub, col, o = {}) {   // T.callout on a soft plate, so map lines never run through the words
+  if (p <= 0) return; const ts = T.calloutPx, ss = T.calloutSubPx, q = E.outCubic(prog(p, .35, .8));
+  ctx.save(); T.setFont(ctx, `500 ${ts}px ${T.MONO}`, (ts * .13).toFixed(1) + 'px'); const tw = ctx.measureText(title).width;
+  T.setFont(ctx, `400 ${ss}px ${T.BODY}`); const w = Math.max(tw, sub ? ctx.measureText(sub).width : 0) + 28;
+  const y0 = ly + ts * .35 - ts * .95, h = ts * 1.0 + (sub ? ss * 1.45 + ss * .45 : ts * .3) + 4, x0 = o.left ? lx - w + 14 : lx - 14;
+  ctx.globalAlpha *= q * .94; ctx.fillStyle = C.bg; rrect(ctx, x0, y0, w, h, 10); ctx.fill(); ctx.restore();
+  T.callout(ctx, ax, ay, lx, ly, p, title, sub, col, {...o, titleCol: C.ink, subCol: col});
+}
+function chip(ctx, lineId, x, y, a, size = 24) {   // line chip (app .chip): white on the line colour, dark on CCL orange
+  const L = D.lines[lineId]; T.setFont(ctx, FM(600, size), '.6px'); const w = ctx.measureText(L.short).width + size * .8, h = size * 1.32;
+  ctx.save(); ctx.globalAlpha *= a; ctx.fillStyle = L.color; rrect(ctx, x, y - h / 2, w, h, h / 2); ctx.fill(); ctx.restore();
+  T.label(ctx, L.short, x + size * .4, y + size * .35, FM(600, size), L.color === '#FA9E0D' ? '#1C1300' : '#FFFFFF', a, 'left', '.6px'); return w;
+}
+function chips(ctx, lines, x, y, a) { let cx = x; lines.forEach((l, i) => { if (i) { T.label(ctx, '›', cx + 9, y + 9, FB(600, 28), C.muted, a, 'center'); cx += 18; } cx += chip(ctx, l, cx, y, a); }); return cx - x; }
+function headline(ctx, t, rows, t0, out, o = {}) {   // Schibsted Grotesk 800 (app h1); words marked hl get a platform-edge yellow stripe
+  const size = o.size || 84, lh = size * 1.06, x = o.x || 140, y = o.y || 300;
+  rows.forEach((segs, r) => {
+    const t1 = t0 + r * .12, segsF = segs.map(s => ({s: s.s, f: FD(size), c: C.ink, ls: '-0.8px', hl: s.hl}));
+    const lay = T.layout(ctx, segsF), yy = y + r * lh;
+    const hp = E.inOutCubic(prog(t, t1 + .38, t1 + .75)), ho = 1 - E.inCubic(prog(t, out, out + .3));
+    if (hp > 0 && ho > 0) { const ws = lay.words.filter(w => w.sg.hl); if (ws.length) { const x0 = x + ws[0].x - 6, x1 = x + ws.at(-1).x + ws.at(-1).w + 6;
+      ctx.save(); ctx.globalAlpha *= ho; ctx.fillStyle = C.signal; ctx.fillRect(x0, yy - size * .27, (x1 - x0) * hp, size * .3); ctx.restore(); } }
+    T.line(ctx, segsF, x, yy, t, {t0: t1, st: .06, rise: 30, blur: 12, out: [out, .32]});
+  });
+}
+const kicker = (ctx, s, x, y, a, col = C.muted) => T.label(ctx, s, x, y, FB(600, 21), col, a, 'left', '1.6px');
+const fmtDate = d => `${d.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+function mark(ctx, x, y, w, h, gap, a) {   // the planner's mark: three rounded bars in NSL red, EWL green, CCL orange
+  ['#D42E12', '#009645', '#FA9E0D'].forEach((col, i) => { ctx.save(); ctx.globalAlpha *= a; ctx.fillStyle = col; rrect(ctx, x + i * (w + gap), y, w, h, w / 2); ctx.fill(); ctx.restore(); });
+}
+function scrim(ctx, a) {   // keeps the text column legible when the map runs under it
+  if (a <= .003) return; const g = ctx.createLinearGradient(0, 0, 1080, 0);
+  g.addColorStop(0, rgba(C.bg, .96 * a)); g.addColorStop(.6, rgba(C.bg, .86 * a)); g.addColorStop(1, rgba(C.bg, 0));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 1080, H);
+}
+
+/* End card: the mark the three lines fly into, and the title beside it. */
+const MK = {x:140, y:428, w:22, h:70, gap:8}, TITLE = {x:250, y:493, size:100};
+const GATHER = ['NS', 'EW', 'CC'].map((id, i) => {
+  const g = LINES.find(L => L.id === id).paths[0], m = g.len / 2;
+  return {id, color: D.lines[id].color, g, m, d: i * .05, bx: MK.x + i * (MK.w + MK.gap) + MK.w / 2,
+    flip: at(g, m + 6)[1] < at(g, m - 6)[1]};   // keep the piece's upper end at the bar's top, so nothing twists in flight
+});
+function drawGather(ctx, c, t) {   // retract each line to its midpoint, then fly the short piece into its bar
+  const k = LW(c.s), N = 120; ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const G of GATHER) {
+    const g0 = TM.gather[0] + G.d, r = E.inOutCubic(prog(t, g0, g0 + .5)), f = E.inOutCubic(prog(t, g0 + .3, TM.gather[1] + G.d));
+    const h = lerp(G.m, (MK.h - MK.w) / 2 / c.s, r);
+    ctx.beginPath();
+    for (let i = 0; i < N; i++) {
+      const [wx, wy] = at(G.g, G.m - h + 2 * h * i / (N - 1)), q = S(c, wx, wy), j = G.flip ? N - 1 - i : i;
+      const x = lerp(q.x, G.bx, f), y = lerp(q.y, MK.y + MK.w / 2 + (MK.h - MK.w) * j / (N - 1), f);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.strokeStyle = G.color; ctx.lineWidth = lerp(3.6 * k * c.s, MK.w, f); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* 5. The world: one map, one camera. */
+film.scene(0, DUR, (ctx, t) => {
+  const c = camAt(t);
+  const dimP = E.inOutCubic(prog(t, ...TM.dim)) * (1 - E.inOutCubic(prog(t, TM.h4out, TM.h4out + .35)));   // the app dims the network to 22% behind a route
+  const g = E.inOutCubic(prog(t, ...TM.gather));
+  const netA = lerp(1, .22, dimP) * lerp(1, .13, g);
+  const on = prog(t, TM.on, TM.on + .55);
+  drawNet(ctx, c, t, {alpha: netA, grow: t < 1.6, on, stationAlpha: 1 - E.inOutCubic(prog(t, TM.back[0] + .2, TM.gather[0])),
+    lineAlpha: L => (['NS', 'EW', 'CC'].includes(L.id) && t >= TM.gather[0] ? 0 : 1)});
+
+  // scenes 2–4: the suggested route, then two slower ones; the highlight fades before the zoom
+  const routeA = 1 - E.inOutCubic(prog(t, TM.h4out, TM.h4out + .35)), sw = [TM.alt1, TM.alt2];
+  if (t >= TM.dep && routeA > 0) {
+    drawRoute(ctx, c, R0, t < TM.arr2 + .1 ? trainS(t) : R0.len, routeA * (1 - E.inOutCubic(prog(t, sw[0], sw[0] + .28))));
+    ALTS.forEach((R, i) => {
+      const drawP = E.inOutCubic(prog(t, sw[i] + .1, sw[i] + .62)), outP = i === ALTS.length - 1 ? 0 : E.inOutCubic(prog(t, sw[i + 1], sw[i + 1] + .28));
+      drawRoute(ctx, c, R, R.len * drawP, routeA * (1 - outP));
+    });
+  }
+  // the train: a dot that runs the route and walks across the interchange
+  const tp = prog(t, TM.dep - .15, TM.dep) * (1 - prog(t, TM.arr2 + .15, TM.arr2 + .4));
+  if (tp > 0) { const [wx, wy] = routeAt(R0, trainS(t)), q = S(c, wx, wy); ctx.save(); ctx.globalAlpha *= tp;
+    ctx.beginPath(); ctx.arc(q.x, q.y, 11, 0, 7); ctx.fillStyle = C.surface; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = C.ink; ctx.stroke(); ctx.restore(); }
+});
+
+/* 6. The text column's scrim sits between the map and everything written on it. */
+film.scene(0, DUR, (ctx, t) => {
+  scrim(ctx, clamp((camAt(t).s - 1.25) / .9) * (1 - prog(t, TM.back[0], TM.back[1])));
+  const ea = E.inOutCubic(prog(t, TM.gather[0] + .3, TM.title + .3));   // end card: the ghost network fades out under the words
+  if (ea > 0) { const g = ctx.createLinearGradient(0, 0, 1560, 0); g.addColorStop(0, rgba(C.bg, .97 * ea)); g.addColorStop(.62, rgba(C.bg, .9 * ea)); g.addColorStop(1, rgba(C.bg, 0)); ctx.fillStyle = g; ctx.fillRect(0, 0, 1560, H); }
+});
+
+/* 7. Map-anchored labels: pins, pills, callouts, station names (above the scrim). */
+film.scene(TM.pinA, TM.h6out + .4, (ctx, t) => {
+  const c = camAt(t), on = prog(t, TM.on, TM.on + .55);
+  // pins at A and B, and their names
+  const pinOut = 1 - E.inCubic(prog(t, TM.zoom[0], TM.zoom[0] + .3));
+  if (pinOut > 0) {
+    const pa = S(c, A.x, A.y), pb = S(c, B.x, B.y);
+    ctx.save(); ctx.globalAlpha *= pinOut;
+    pin(ctx, pa.x, pa.y, 'A', 'a', prog(t, TM.pinA, TM.pinA + .4)); pin(ctx, pb.x, pb.y, 'B', 'b', prog(t, TM.pinB, TM.pinB + .4));
+    T.line(ctx, [{s: A.name, f: FB(700, 28), c: C.ink}], pa.x, pa.y + 58, t, {t0: TM.pinA + .05, st: .05, rise: 12, blur: 8, halo: C.bg, haloWidth: 8, align: 'center', out: [TM.dep + .62, .3]});
+    T.line(ctx, [{s: B.name, f: FB(700, 28), c: C.ink}], pb.x - 28, pb.y + 58, t, {t0: TM.pinB + .15, st: .05, rise: 12, blur: 8, halo: C.bg, haloWidth: 8, align: 'right', out: [TM.h2out, .3]});
+    ctx.restore();
+  }
+  // the change at Tanah Merah: a pill with its time, a callout with its rating
+  const xo = 1 - E.inCubic(prog(t, TM.h2out, TM.h2out + .3));
+  if (t >= TM.xfer && xo > 0) { const q = S(c, XS.x, XS.y);
+    ctx.save(); ctx.globalAlpha *= xo;
+    pill(ctx, q.x, q.y - 46, `${XF.min} min`, XF.level, XF.tapOut, prog(t, TM.xfer, TM.xfer + .45), 26);
+    co(ctx, q.x - 6, q.y + 16, q.x - 150, q.y + 150, prog(t, TM.co, TM.co + .55), XS.name.toUpperCase(), LV[XF.level].label, LV[XF.level].fg, {left: true});
+    ctx.restore(); }
+  // scene 5: a pill at every interchange in view, swept west to east; two callouts
+  const pillOut = 1 - E.inCubic(prog(t, TM.h5out, TM.h5out + .3));
+  if (t >= TM.pills[0] - .1 && pillOut > 0) {
+    ctx.save(); ctx.globalAlpha *= pillOut;
+    for (const p of PILLS) { const q = S(c, p.x, p.y); if (!inView(q)) continue; const t0 = pillT.get(p.id); pill(ctx, q.x, q.y, p.text, p.level, p.tapOut, prog(t, t0, t0 + .4), 22); }
+    const cq = S(c, QUICK.x, QUICK.y), cl = S(c, LONG.x, LONG.y);
+    co(ctx, cq.x + 36, cq.y + 4, cq.x + 120, cq.y + 66, prog(t, TM.co1, TM.co1 + .55), 'CITY HALL', 'Quick change', LV.quick.fg);
+    co(ctx, cl.x - 48, cl.y + 8, cl.x - 110, cl.y + 150, prog(t, TM.co2, TM.co2 + .55), 'OUTRAM PARK', 'Very long', LV.verylong.fg, {left: true});
+    ctx.restore();
+  }
+  // scene 6: the three stations that switch on, ringed and named
+  const nmA = 1 - prog(t, TM.h6out, TM.h6out + .3);
+  if (t >= TM.on && nmA > 0) {
+    OPEN.forEach((s, i) => { const q = S(c, s.x, s.y), right = s.id !== 'bedok-south', dx = s.id === 'sungei-bedok' ? 56 : right ? 30 : -30;
+      ctx.save(); ctx.globalAlpha *= nmA; ctx.strokeStyle = rgba(C.signal, 1 - on); ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(q.x, q.y, 12 + 46 * E.outCubic(on), 0, 7); ctx.stroke(); ctx.restore();
+      T.line(ctx, [{s: s.name, f: FB(700, 30), c: C.ink}], q.x + dx, q.y + 10, t, {t0: TM.names + i * .06, st: .05, rise: 12, blur: 8, halo: C.bg, haloWidth: 8, align: right ? 'left' : 'right', out: [TM.h6out, .3]});
+    });
+  }
+});
+
+/* 8. The text column: headlines and cards, in screen space. */
+film.scene(0, TM.back[1], (ctx, t) => {
+  // 1 · opening
+  headline(ctx, t, [[{s:'Plan any MRT'}], [{s:'or LRT '}, {s:'journey.', hl:true}]], TM.h1, TM.h1out);
+
+  // 2 · where to change
+  headline(ctx, t, [[{s:'Where to '}, {s:'change.', hl:true}]], TM.h2, TM.h2out);
+
+  // 3 · how long: the journey as a bar (ride, change, ride) and a counter
+  headline(ctx, t, [[{s:'How long it '}, {s:'takes.', hl:true}]], TM.h3, TM.h3out);
+  const o3 = 1 - E.inCubic(prog(t, TM.h3out, TM.h3out + .3));
+  if (t > TM.bar0 - .3 && o3 > 0) {
+    const O = J.options[0], legs = O.legs, tot = legs.reduce((a, l) => a + l.min, 0) + O.transfers.reduce((a, x) => a + x.min, 0);
+    const X0 = 140, BW = 600, Y = 640, ppm = BW / tot, fill = E.inOutCubic(prog(t, TM.bar0, TM.bar1));
+    ctx.save(); ctx.globalAlpha *= o3 * E.outCubic(prog(t, TM.bar0 - .3, TM.bar0));
+    ctx.fillStyle = C.rule; rrect(ctx, X0, Y - 12, BW, 24, 12); ctx.fill();
+    let x = X0; const segs = [{w: legs[0].min, col: legs[0].color}, {w: O.transfers[0].min, col: null}, {w: legs[1].min, col: legs[1].color}];
+    ctx.save(); rrect(ctx, X0, Y - 12, BW * fill, 24, 12); ctx.clip();
+    segs.forEach(sg => { const w = sg.w * ppm; if (sg.col) { ctx.fillStyle = sg.col; ctx.fillRect(x, Y - 12, w, 24); } else { ctx.fillStyle = LV.quick.bg; ctx.fillRect(x, Y - 12, w, 24); ctx.fillStyle = LV.quick.fg; for (let d = x + 4; d < x + w - 2; d += 7) { ctx.beginPath(); ctx.arc(d, Y, 2, 0, 7); ctx.fill(); } } x += w; });
+    ctx.restore();
+    const shown = Math.round(tot * E.inOutCubic(prog(M.frameT(t), TM.bar0, TM.bar1)));
+    const cw = T.tabular(ctx, String(shown), X0 - 4, Y - 58, FD(150), C.ink, 92);
+    T.label(ctx, 'min', X0 + cw + 14, Y - 58, FD(52), C.ink, E.outCubic(prog(t, TM.bar0, TM.bar0 + .3)));
+    const xm = X0 + (legs[0].min + O.transfers[0].min / 2) * ppm;
+    T.line(ctx, [{s:`${O.rideMin} min on trains`, f: FB(500, 28), c: C.ink}], X0, Y + 62, t, {t0: TM.lab1, st: .04, rise: 12, blur: 8, out: [TM.h3out, .3]});
+    T.line(ctx, [{s:`${O.transferMin} min transferring`, f: FB(500, 28), c: LV.quick.fg}], X0 + BW, Y + 62, t, {t0: TM.lab2, st: .04, rise: 12, blur: 8, align: 'right', out: [TM.h3out, .3]});
+    const tk = E.outCubic(prog(t, TM.lab2, TM.lab2 + .3)); ctx.strokeStyle = rgba(LV.quick.fg, tk); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(xm, Y + 16); ctx.lineTo(xm, Y + 30); ctx.stroke();
+    ctx.restore();
+  }
+
+  // 4 · what it costs: one fare, whichever route
+  headline(ctx, t, [[{s:'What it '}, {s:'costs.', hl:true}]], TM.h4, TM.h4out);
+  const o4 = 1 - E.inCubic(prog(t, TM.h4out, TM.h4out + .3));
+  if (t > TM.fare - .1 && o4 > 0) {
+    const F = J.fare, money = c => '$' + (c / 100).toFixed(2), fa = E.outCubic(prog(t, TM.fare, TM.fare + .35));
+    ctx.save(); ctx.globalAlpha *= o4;
+    kicker(ctx, 'ADULT CARD FARE', 144, 430, fa);
+    T.line(ctx, [{s: money(F.adultCents), f: FD(150), c: C.ink}], 136, 585, t, {t0: TM.fare + .05, st: .05, rise: 26, blur: 10});
+    T.line(ctx, [{s:'Every route costs the same.', f: FB(500, 32), c: C.muted}], 142, 650, t, {t0: TM.sub4, st: .045, rise: 14, blur: 8});
+    // route card: line chips and time of the route on the map
+    const opts = [J.options[0], ...ALTS.map(R => R.o)], ft = M.frameT(t), idx = ft < TM.alt1 + .25 ? 0 : ft < TM.alt2 + .25 ? 1 : 2;
+    const ca = E.outCubic(prog(t, TM.fare + .1, TM.fare + .4));
+    ctx.save(); ctx.globalAlpha *= ca; ctx.fillStyle = C.surface; rrect(ctx, 140, 712, 600, 92, 14); ctx.fill(); ctx.strokeStyle = C.rule; ctx.lineWidth = 1.5; ctx.stroke(); ctx.restore();
+    const sp = Math.max(...[TM.alt1, TM.alt2].map(s => Math.sin(Math.PI * prog(t, s + .15, s + .35))));
+    chips(ctx, opts[idx].lines, 166, 758, ca * (1 - sp));
+    T.tabular(ctx, String(opts[idx].totalMin), 664, 772, FD(40), C.ink, 24, 'right');
+    T.label(ctx, 'min', 672, 772, FB(600, 22), C.muted, ca);
+    ctx.restore();
+  }
+
+  // 5 · every transfer, timed: the app's legend of the four ratings
+  headline(ctx, t, [[{s:'Every transfer,'}], [{s:'timed.', hl:true}]], TM.h5, TM.h5out);
+  const o5 = 1 - E.inCubic(prog(t, TM.h5out, TM.h5out + .3));
+  if (t > TM.legend && o5 > 0) {
+    ctx.save(); ctx.globalAlpha *= o5;
+    let x = 140; [['quick', '≤3'], ['moderate', '4–5'], ['long', '6–7'], ['verylong', '8+']].forEach(([lv, s], i) => {
+      const w = pillW(s, 26); pill(ctx, x + w / 2, 536, s, lv, false, prog(t, TM.legend + .1 + i * .08, TM.legend + .5 + i * .08), 26); x += w + 12; });
+    T.label(ctx, 'min', x + 4, 545, FB(600, 26), C.muted, E.outCubic(prog(t, TM.legend + .4, TM.legend + .7)));
+    ctx.restore();
+  }
+
+  // 6 · openings switch on by themselves: the planner's travel date rolls to opening day
+  headline(ctx, t, [[{s:'Openings switch on'}], [{s:'by '}, {s:'themselves.', hl:true}]], TM.h6, TM.h6out);
+  const o6 = 1 - E.inCubic(prog(t, TM.h6out, TM.h6out + .3));
+  if (t > TM.date0 - .3 && o6 > 0) {
+    ctx.save(); ctx.globalAlpha *= o6 * E.outCubic(prog(t, TM.date0 - .3, TM.date0));
+    kicker(ctx, 'TRAVELLING ON', 144, 500, 1);
+    const d0 = Date.UTC(2026, 10, 8), d1 = Date.UTC(2026, 11, 26), days = Math.round((d1 - d0) / 864e5);
+    const n = Math.round(days * E.inOutCubic(prog(M.frameT(t), TM.date0, TM.date1))), lit = E.outCubic(prog(t, TM.on, TM.on + .3));
+    T.setFont(ctx, FD(64)); const fw = [...fmtDate(new Date(d1))].reduce((a, ch) => a + (/[0-9]/.test(ch) ? 40 : ctx.measureText(ch).width + 40 * .08), 0);
+    ctx.fillStyle = rgba(C.signal, lit); rrect(ctx, 126, 522, fw + 36, 90, 12); ctx.fill();
+    T.tabular(ctx, fmtDate(new Date(d0 + n * 864e5)), 144, 588, FD(64), C.ink, 40);
+    ctx.restore();
+  }
+});
+
+/* 9. Overlay: the planner's header (mark + name) until the end card, then the end card itself. */
+film.overlay((ctx, t) => {
+  if (t >= TM.gather[0]) drawGather(ctx, camAt(t), t);
+  const ha = E.outCubic(prog(t, TM.brand, TM.brand + .4)) * (1 - E.inCubic(prog(t, TM.back[0], TM.back[0] + .35)));
+  if (ha > 0) { mark(ctx, 140, 87, 7, 22, 3, ha); T.label(ctx, 'Singapore MRT Planner', 186, 112, FD(30), C.ink, ha, 'left', '-.3px'); }
+  if (t >= TM.title) {
+    const push = 1 + .012 * E.inOutSine(prog(t, TM.title, DUR));
+    ctx.save(); ctx.translate(140, 560); ctx.scale(push, push); ctx.translate(-140, -560);
+    T.line(ctx, [{s:'Singapore MRT Planner', f: FD(TITLE.size), c: C.ink, ls: '-1px'}], TITLE.x, TITLE.y, t, {t0: TM.title, st: .07, rise: 26, blur: 12});
+    T.line(ctx, [{s:'Where to change, how long, what it costs.', f: FB(400, 38), c: C.muted}], 144, 592, t, {t0: TM.sub, st: .04, rise: 16, blur: 8});
+    const uq = E.outCubic(prog(t, TM.url, TM.url + .4));
+    if (uq > 0) { T.label(ctx, 'semui01.github.io/transit', 144, 700, FB(600, 40), C.ink, uq);
+      ctx.save(); T.setFont(ctx, FB(600, 40)); const uw = ctx.measureText('semui01.github.io/transit').width; ctx.restore();
+      ctx.fillStyle = rgba(C.signal, uq); ctx.fillRect(144, 716, uw * E.inOutCubic(prog(t, TM.url + .15, TM.url + .6)), 8); }
+    ctx.restore();
+  }
+});
+
+/* 10. Cues for the score (cues.json): every audible event in film seconds. */
+const lineStarts = ['NS', 'EW', 'NE', 'CC', 'DT', 'TE', 'BP'].map(id => GROW[id][0]);
+const pillCues = PILLS.filter(p => inView(S(VIEW.core, p.x, p.y))).map(p => ({t: +pillT.get(p.id).toFixed(3), v: p.hi})).sort((a, b) => a.t - b.t);
+const dateTicks = []; { const d0 = Date.UTC(2026, 10, 8), d1 = Date.UTC(2026, 11, 26), days = Math.round((d1 - d0) / 864e5); for (let n = 1; n <= days; n += 1) { const tt = solveTime(x => days * E.inOutCubic(prog(x, TM.date0, TM.date1)), n - .5, TM.date0, TM.date1); if (!dateTicks.length || tt - dateTicks.at(-1) > .045) dateTicks.push(+tt.toFixed(3)); } }
+film.cues = {
+  lineStarts, brand: TM.brand, h1: TM.h1,
+  pins: [TM.pinA + .32, TM.pinB + .32], dep: TM.dep, arr1: TM.arr1, xfer: TM.xfer, dep2: TM.dep2, arr2: TM.arr2,
+  pull: TM.pull, bar0: TM.bar0, bar1: TM.bar1, fare: TM.fare, routeSwaps: [TM.alt1 + .1, TM.alt2 + .1],
+  zoom: TM.zoom, pills: pillCues.map(p => p.t), pillVals: pillCues.map(p => p.v), callouts: [TM.co, TM.co1, TM.co2], pan: TM.pan, dateTicks, on: TM.on,
+  back: TM.back, gather: TM.gather, lands: GATHER.map(G => +(TM.gather[1] + G.d).toFixed(3)), title: TM.title, sub: TM.sub, url: TM.url,
+  scenes: [0, TM.s2, TM.pull[0], TM.h4 - .2, TM.zoom[0], TM.pan[0], TM.back[0]],
+  transitions: [[TM.pull[0], TM.pull[1]], TM.zoom, TM.pan, [TM.back[0], TM.gather[1] + .15]],
+  sync: ['pills', 'pins', 'lands'],
+};
+film.start([FD(40), `700 40px ${T.DISP}`, FB(400, 20), FB(500, 20), FB(600, 20), FB(700, 20), FM(500, 20), FM(600, 20)]);
+})();
+</script>
+</body>
+</html>
