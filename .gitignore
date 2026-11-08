@@ -1,0 +1,6 @@
+node_modules/
+__pycache__/
+*.pdf
+sg-rail.geojson
+report.md
+.DS_Store

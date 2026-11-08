@@ -1,0 +1,44 @@
+name: Check LTA rail network
+
+on:
+  schedule:
+    - cron: "17 1 * * 1"   # Mondays 09:17 Singapore time
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pdftotext
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+      - name: Compare planner data with LTA
+        id: check
+        run: |
+          set +e
+          node tools/check-lta-updates.mjs --out report.md
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+      - name: Open or update an issue
+        if: steps.check.outputs.status == '2'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="LTA rail network changed: update planner data"
+          num=$(gh issue list --state open --search "\"$title\" in:title" --json number -q '.[0].number')
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body-file report.md
+          else
+            gh issue create --title "$title" --body-file report.md
+          fi
+      - name: Fail if LTA could not be checked
+        if: steps.check.outputs.status == '1'
+        run: |
+          echo "::error::Could not reach the LTA rail network page. Run tools/check-lta-updates.mjs locally."
+          exit 1

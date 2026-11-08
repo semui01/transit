@@ -1,0 +1,11 @@
+{
+  "name": "sg-mrt-planner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Singapore MRT/LRT journey planner: transfers, journey time and fares.",
+  "scripts": {
+    "test": "node --test tests/planner.test.mjs",
+    "check-updates": "node tools/check-lta-updates.mjs",
+    "start": "python3 -m http.server 8000"
+  }
+}
