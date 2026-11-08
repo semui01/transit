@@ -24,7 +24,7 @@ import argparse, datetime, json, math, re, sys
 LINES = {
     "G": ("TokyoMetro.Ginza", "Ginza Line", "銀座線", "#FF9500", "metro"),
     "M": ("TokyoMetro.Marunouchi", "Marunouchi Line", "丸ノ内線", "#F62E36", "metro"),
-    "Mb": ("TokyoMetro.MarunouchiBranch", "Marunouchi Line (Honancho branch)", "丸ノ内線 分岐線", "#F62E36", "metro"),
+    "Mb": ("TokyoMetro.MarunouchiBranch", "Marunouchi Line (Honancho branch)", "丸ノ内線（方南町支線）", "#F62E36", "metro"),
     "H": ("TokyoMetro.Hibiya", "Hibiya Line", "日比谷線", "#B5B5AC", "metro"),
     "T": ("TokyoMetro.Tozai", "Tozai Line", "東西線", "#009BBF", "metro"),
     "C": ("TokyoMetro.Chiyoda", "Chiyoda Line", "千代田線", "#00BB85", "metro"),
@@ -32,10 +32,10 @@ LINES = {
     "Z": ("TokyoMetro.Hanzomon", "Hanzomon Line", "半蔵門線", "#8F76D6", "metro"),
     "N": ("TokyoMetro.Namboku", "Namboku Line", "南北線", "#00AC9B", "metro"),
     "F": ("TokyoMetro.Fukutoshin", "Fukutoshin Line", "副都心線", "#9C5E31", "metro"),
-    "A": ("Toei.Asakusa", "Asakusa Line", "浅草線", "#E85298", "toei"),
-    "I": ("Toei.Mita", "Mita Line", "三田線", "#0079C2", "toei"),
-    "S": ("Toei.Shinjuku", "Shinjuku Line", "新宿線", "#6CBB5A", "toei"),
-    "E": ("Toei.Oedo", "Oedo Line", "大江戸線", "#B6007A", "toei"),
+    "A": ("Toei.Asakusa", "Asakusa Line", "都営浅草線", "#E85298", "toei"),
+    "I": ("Toei.Mita", "Mita Line", "都営三田線", "#0079C2", "toei"),
+    "S": ("Toei.Shinjuku", "Shinjuku Line", "都営新宿線", "#6CBB5A", "toei"),
+    "E": ("Toei.Oedo", "Oedo Line", "都営大江戸線", "#B6007A", "toei"),
 }
 OPERATORS = {"metro": {"name": "Tokyo Metro", "ja": "東京メトロ"}, "toei": {"name": "Toei Subway", "ja": "都営地下鉄"}}
 
@@ -327,25 +327,34 @@ def main():
         return n
     def overlap(b, c):
         return max(0, min(b[2], c[2]) - max(b[0], c[0])) * max(0, min(b[3], c[3]) - max(b[1], c[1]))
+    FSJ = 5.2   # Japanese line
     order = sorted(stations, key=lambda s: (-len(s["codes"]), -("complex" in s), s["y"]))
     for s in order:
-        text = s["short"]
-        w, h = len(text) * FS * 0.5 + 1, FS
+        text, ja = s["short"], norm_ja(s["ja"])
+        wen, wja = len(text) * FS * 0.5 + 1, len(ja) * FSJ + 0.5
+        w, h = max(wen, wja), FS + FSJ * 1.15
         x, y = pos[s["id"]]
         off = 4.2
-        cands = [("E", x + off, y + h * 0.35), ("W", x - off - w, y + h * 0.35), ("NE", x + off * 0.7, y - off * 0.7),
-                 ("NW", x - off * 0.7 - w, y - off * 0.7), ("SE", x + off * 0.7, y + off * 0.7 + h * 0.8),
-                 ("SW", x - off * 0.7 - w, y + off * 0.7 + h * 0.8), ("N", x - w / 2, y - off - 0.5), ("S", x - w / 2, y + off + h * 0.85)]
+        # (anchor, anchor x, top of the two-line box)
+        cands = [("start", x + off, y - h * 0.45), ("end", x - off, y - h * 0.45),
+                 ("start", x + off * 0.7, y - off * 0.7 - h), ("end", x - off * 0.7, y - off * 0.7 - h),
+                 ("start", x + off * 0.7, y + off * 0.7), ("end", x - off * 0.7, y + off * 0.7),
+                 ("middle", x, y - off - h), ("middle", x, y + off)]
         best = None
-        for rank, (name, lx, ly) in enumerate(cands):
-            box = (lx, ly - h * 0.78, lx + w, ly + h * 0.22)
+        for rank, (anchor, ax, top) in enumerate(cands):
+            x0 = ax if anchor == "start" else ax - w if anchor == "end" else ax - w / 2
+            box = (x0, top, x0 + w, top + h)
             score = rank * 0.4 + hits(box) * 3
             score += sum(overlap(box, b) for b in placed) * 2.5
             score += sum(1 for o in stations if o is not s and box[0] - 2 < o["x"] < box[2] + 2 and box[1] - 2 < o["y"] < box[3] + 2) * 6
-            if best is None or score < best[0]: best = (score, lx, ly, box)
-        placed.append(best[3])
+            if best is None or score < best[0]: best = (score, anchor, ax, top, box)
+        _, anchor, ax, top, box = best
+        placed.append(box)
         minor = 0 if (len(s["codes"]) > 1 or "complex" in s) else 1
-        s["label"] = [[text, round(best[1], 1), round(best[2], 1), round(w, 1), FS, minor]]
+        y_en = top + FS * 0.8
+        # [text, anchor x, baseline y, width, font size, minor, language, anchor]
+        s["label"] = [[text, round(ax, 1), round(y_en, 1), round(wen, 1), FS, minor, None, anchor],
+                      [ja, round(ax, 1), round(y_en + FSJ * 1.15, 1), round(wja, 1), FSJ, minor, "ja", anchor]]
 
     out_st = []
     for s in sorted(stations, key=lambda s: s["name"]):

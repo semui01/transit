@@ -106,3 +106,12 @@ test("every station is reachable from Otemachi, without revisiting stations, qui
   }
   assert.ok(worst < 1500, `slowest plan took ${worst} ms`);
 });
+
+test("every station has a Japanese name and a Japanese map label", () => {
+  for (const s of N.stations) {
+    assert.ok(/[぀-ヿ一-鿿]/.test(s.ja), `${s.name}: no Japanese name`);
+    const ja = s.label.find((r) => r[6] === "ja");
+    assert.ok(ja && ja[0].length, `${s.name}: no Japanese label`);
+  }
+  assert.equal(N.lines.E.ja, "都営大江戸線");
+});

@@ -11,7 +11,11 @@
 
   const today = MRTPlanner.todayISO();
   const state = { city: null, from: null, to: null, date: today, sel: 0, res: null, example: false, moreOpen: false, showXfer: true };
-  try { if (localStorage.getItem("mrt-show-transfers") === "0") state.showXfer = false; } catch (_) { /* storage unavailable */ }
+  state.showLocal = true;
+  try {
+    if (localStorage.getItem("mrt-show-transfers") === "0") state.showXfer = false;
+    if (localStorage.getItem("mrt-local-labels") === "0") state.showLocal = false;
+  } catch (_) { /* storage unavailable */ }
 
   // current city
   let city = null, N = null, F = null, planner = null, stationById = new Map(), moneyFmt = null;
@@ -37,6 +41,18 @@
   }
   const money = (amount) => moneyFmt.format(amount / Math.pow(10, F.minorUnits ?? 2));
   const localName = (s) => s.ja || s.zh || "";
+  const localLang = () => (city && city.localLang) || "zh";
+  const showLocal = () => !!(city && city.showLocalNames);
+  // station name for steps, cards and the guide: English, plus the local name where signs use it
+  function nmL(id) {
+    const s = stationById.get(id);
+    const ln = showLocal() ? localName(s) : "";
+    return esc(s.name) + (ln ? ` <span class="jp" lang="${localLang()}">${esc(ln)}</span>` : "");
+  }
+  function lineL(leg) {
+    const L = N.lines[leg.line];
+    return `<b>${esc(leg.lineName)}</b>` + (showLocal() && L.ja ? ` <span class="jp" lang="${localLang()}">${esc(L.ja)}</span>` : "");
+  }
   const lvlChip = (t, text) => `<span class="lvl lvl-${t.level.id}${t.tapOut ? " tap" : ""}">${text || `${t.min} min`}</span>`;
   function pairHtml(t) {
     if (t.fromCode === t.toCode) {
@@ -86,13 +102,21 @@
   function setupCombo(which) {
     const input = $(`#${which}-input`), list = $(`#${which}-list`);
     let items = [], active = -1;
-    const restore = () => { input.value = state[which] && stationById.has(state[which]) ? nm(state[which]) : ""; };
+    const tag = $(`#${which}-local`);
+    const restore = () => {
+      const ok = state[which] && stationById.has(state[which]);
+      input.value = ok ? nm(state[which]) : "";
+      const ln = ok && showLocal() ? localName(stationById.get(state[which])) : "";
+      tag.textContent = ln;
+      tag.setAttribute("lang", localLang());
+      input.closest(".combo").classList.toggle("has-local", !!ln);
+    };
     function render() {
       list.innerHTML = items.map((s, i) => {
         const soon = !planner.isStationOpen(s.id);
         const ln = localName(s);
         return `<li id="${which}-opt-${i}" role="option" aria-selected="${i === active}" data-id="${s.id}">` +
-          `<span class="nm">${esc(s.name)}${ln ? ` <span class="ln" lang="${city.id === "tokyo" ? "ja" : "zh"}">${esc(ln)}</span>` : ""}` +
+          `<span class="nm">${esc(s.name)}${ln ? ` <span class="ln" lang="${localLang()}">${esc(ln)}</span>` : ""}` +
           `${soon ? ` <span class="soon">opens ${fmtDate(firstOpening(s))}</span>` : ""}</span>${badges(s)}</li>`;
       }).join("");
       if (active >= 0) {
@@ -197,19 +221,21 @@
   }
   function labelRows(s) {
     // [text, x, y, anchor, size, minor]; keep the side of the station the map puts the label on
-    return (s.label || []).map(([t, x, y, w, fs, minor]) => {
-      let anchor = "start", ax = x;
-      if (x + w <= s.x + 3) { anchor = "end"; ax = x + w; }
-      else if (x < s.x - 3) { anchor = "middle"; ax = x + w / 2; }
-      return [t, ax, y, anchor, fs, minor];
+    return (s.label || []).map(([t, x, y, w, fs, minor, lang, anchor]) => {
+      if (anchor) return [t, x, y, anchor, fs, minor, lang];
+      let a = "start", ax = x;
+      if (x + w <= s.x + 3) { a = "end"; ax = x + w; }
+      else if (x < s.x - 3) { a = "middle"; ax = x + w / 2; }
+      return [t, ax, y, a, fs, minor, null];
     });
   }
   function drawLabel(s, parent, extraClass, keep, nudge) {
-    for (let [t, x, y, anchor, fs, minor] of labelRows(s)) {
+    for (let [t, x, y, anchor, fs, minor, lang] of labelRows(s)) {
       if (nudge) { // move clear of a start/end pin
         if (anchor === "start") x += nudge; else if (anchor === "end") x -= nudge; else y += y < s.y ? -nudge : nudge;
       }
-      const tx = el("text", { x, y, "font-size": (fs * 0.95).toFixed(2), "text-anchor": anchor, class: "lbl" + (extraClass || "") + (minor && !keep ? " minor" : ""), "data-st": s.id }, parent);
+      const tx = el("text", { x, y, "font-size": (fs * 0.95).toFixed(2), "text-anchor": anchor, class: "lbl" + (extraClass || "") + (minor && !keep ? " minor" : "") + (lang ? " loc" : ""), "data-st": s.id }, parent);
+      if (lang) tx.setAttribute("lang", lang);
       tx.textContent = t;
     }
   }
@@ -521,7 +547,7 @@
     const d = firstOpening(s);
     const ln = localName(s);
     popup.innerHTML = `<button type="button" class="x" data-act="close" aria-label="Close">&times;</button>` +
-      `<h3>${esc(s.name)}${ln ? `<span class="zh" lang="${city.id === "tokyo" ? "ja" : "zh"}">${esc(ln)}</span>` : ""}</h3>${badges(s)}` +
+      `<h3>${esc(s.name)}${ln ? `<span class="zh" lang="${localLang()}">${esc(ln)}</span>` : ""}</h3>${badges(s)}` +
       transfersListHtml(planner.stationTransfers(id)) +
       (open
         ? `<div class="acts"><button type="button" class="a" data-act="from">Start here</button><button type="button" class="b" data-act="to">Go here</button></div>`
@@ -582,39 +608,39 @@
   }
 
   function towardsText(leg) {
-    if (leg.towards) return ` towards <b>${esc(nm(leg.towards))}</b>`;
-    return leg.nStops ? ` (next stop: ${esc(nm(leg.nextStop))})` : "";
+    if (leg.towards) return ` towards <b>${nmL(leg.towards)}</b>`;
+    return leg.nStops ? ` (next stop: ${nmL(leg.nextStop)})` : "";
   }
   const tapOutHtml = () => `<div class="sub"><span class="tapout">${esc(city.tapOutLabel || "Tap out to transfer")}</span> ${esc(city.tapOutNote || "")}</div>`;
 
   function stepsHtml(o) {
     let h = `<ol class="steps">`;
     if (o.startWalk) {
-      h += `<li class="stop start"><span class="pinmark pin-a">A</span><span class="name">${esc(nm(o.startWalk.from))}</span>${badges(stationById.get(o.startWalk.from))}` +
-        `<div class="sub">Walk to <b>${esc(nm(o.startWalk.to))}</b> station · about ${o.startWalk.min} min</div></li><li class="walk"></li>`;
+      h += `<li class="stop start"><span class="pinmark pin-a">A</span><span class="name">${nmL(o.startWalk.from)}</span>${badges(stationById.get(o.startWalk.from))}` +
+        `<div class="sub">Walk to <b>${nmL(o.startWalk.to)}</b> station · about ${o.startWalk.min} min</div></li><li class="walk"></li>`;
     }
     o.legs.forEach((leg, i) => {
       const s = stationById.get(leg.from);
       if (i === 0) {
-        h += `<li class="stop ${o.startWalk ? "xfer" : "start"}">${o.startWalk ? "" : `<span class="pinmark pin-a">A</span>`}<span class="name">${esc(s.name)}</span>${codeBadge(leg.fromCode)}` +
-          `<div class="sub">Board the <b>${esc(leg.lineName)}</b>${towardsText(leg)}</div></li>`;
+        h += `<li class="stop ${o.startWalk ? "xfer" : "start"}">${o.startWalk ? "" : `<span class="pinmark pin-a">A</span>`}<span class="name">${nmL(s.id)}</span>${codeBadge(leg.fromCode)}` +
+          `<div class="sub">Board the ${lineL(leg)}${towardsText(leg)}</div></li>`;
       } else {
         const t = o.transfers[i - 1];
         const walk = t.station !== t.toStation;
-        h += `<li class="stop xfer"><span class="name">${esc(nm(t.station))}</span><span class="codes">${codeBadge(t.fromCode)}${t.fromCode !== t.toCode ? codeBadge(t.toCode) : ""}</span>` +
-          `<div class="sub">${walk ? `Walk to <b>${esc(nm(t.toStation))}</b> and transfer` : "Transfer"} to the <b>${esc(leg.lineName)}</b>${towardsText(leg)}</div>` +
+        h += `<li class="stop xfer"><span class="name">${nmL(t.station)}</span><span class="codes">${codeBadge(t.fromCode)}${t.fromCode !== t.toCode ? codeBadge(t.toCode) : ""}</span>` +
+          `<div class="sub">${walk ? `Walk to <b>${nmL(t.toStation)}</b> and transfer` : "Transfer"} to the ${lineL(leg)}${towardsText(leg)}</div>` +
           `<div class="sub">${lvlChip(t, `about ${t.min} min · ${t.level.label}`)}${t.note && !t.tapOut ? ` ${esc(t.note)}` : ""}</div>` +
           (t.tapOut ? tapOutHtml() : "") + `</li>`;
       }
       const mid = leg.stops.slice(1, -1);
       h += `<li class="ride" style="--c:${leg.color}">${plural(leg.nStops, "stop")} · ${Math.max(1, Math.round(leg.min))} min` +
-        (mid.length ? `<details><summary>Stations passed</summary><ol>${mid.map((id) => `<li>${esc(nm(id))}</li>`).join("")}</ol></details>` : "") + `</li>`;
+        (mid.length ? `<details><summary>Stations passed</summary><ol>${mid.map((id) => `<li>${nmL(id)}</li>`).join("")}</ol></details>` : "") + `</li>`;
       if (i === o.legs.length - 1) {
         if (o.endWalk) {
-          h += `<li class="stop xfer"><span class="name">${esc(nm(leg.to))}</span>${codeBadge(leg.toCode)}<div class="sub">Get off and walk to <b>${esc(nm(o.endWalk.to))}</b> · about ${o.endWalk.min} min</div></li><li class="walk"></li>` +
-            `<li class="stop end"><span class="pinmark pin-b">B</span><span class="name">${esc(nm(o.endWalk.to))}</span><div class="sub">Arrive</div></li>`;
+          h += `<li class="stop xfer"><span class="name">${nmL(leg.to)}</span>${codeBadge(leg.toCode)}<div class="sub">Get off and walk to <b>${nmL(o.endWalk.to)}</b> · about ${o.endWalk.min} min</div></li><li class="walk"></li>` +
+            `<li class="stop end"><span class="pinmark pin-b">B</span><span class="name">${nmL(o.endWalk.to)}</span><div class="sub">Arrive</div></li>`;
         } else {
-          h += `<li class="stop end"><span class="pinmark pin-b">B</span><span class="name">${esc(nm(leg.to))}</span>${codeBadge(leg.toCode)}<div class="sub">Arrive</div></li>`;
+          h += `<li class="stop end"><span class="pinmark pin-b">B</span><span class="name">${nmL(leg.to)}</span>${codeBadge(leg.toCode)}<div class="sub">Arrive</div></li>`;
         }
       }
     });
@@ -639,7 +665,7 @@
     const seq = o.legs.map((l) => lineChip(l.line)).join('<span class="arr" aria-hidden="true">›</span>');
     const meta = [];
     if (o.fare && o.fare.kind === "operator") meta.push(`<b class="ofare">${money(o.fare.ic)}</b>`);
-    meta.push(o.nTransfers ? `${plural(o.nTransfers, "transfer")} at ${esc(listJoin(o.transfers.map((t) => nm(t.station))))}` : "No transfers");
+    meta.push(o.nTransfers ? `${plural(o.nTransfers, "transfer")} at ${listJoin(o.transfers.map((t) => nmL(t.station)))}` : "No transfers");
     meta.push(plural(o.nStops, "stop"));
     if (o.tapOuts) meta.push(esc((city.tapOutLabel || "tap out").toLowerCase()));
     return `<article class="opt${sel ? " sel" : ""}" data-idx="${idx}">` +
@@ -653,7 +679,9 @@
   function fareHtml(f) {
     if (!f) return "";
     if (f.kind === "operator") {
-      const rows = f.segments.map((s) => `<dt>${esc(s.name)} · ${s.km} km</dt><dd>${money(s.ic)}</dd>`).join("") +
+      const ops = (N.meta && N.meta.operators) || {};
+      const opName = (s) => esc(s.name) + (showLocal() && ops[s.operator] && ops[s.operator].ja ? ` <span class="jp" lang="${localLang()}">${esc(ops[s.operator].ja)}</span>` : "");
+      const rows = f.segments.map((s) => `<dt>${opName(s)} · ${s.km} km</dt><dd>${money(s.ic)}</dd>`).join("") +
         (f.discount ? `<dt>Discount for changing operator</dt><dd>−${money(f.discount)}</dd>` : "") +
         `<dt>Paper ticket</dt><dd>${money(f.ticket)}</dd>`;
       return `<div class="fare"><div class="big"><small>${esc(city.fareLabel || "Fare")}</small>${money(f.ic)}</div><dl>${rows}</dl>` +
@@ -725,7 +753,7 @@
       const rs = rows.filter((t) => t.level.id === L.id);
       if (!rs.length) continue;
       h += `<div class="ggroup"><h3><span class="lvl lvl-${L.id}">${esc(L.label)}</span> ${LEVEL_HEAD[L.id]}</h3><ul>` +
-        rs.map((t) => `<li><button type="button" class="grow" data-st="${t.station}"><span class="gname">${esc(nm(t.station))}${t.toStation !== t.station ? ` ↔ ${esc(nm(t.toStation))}` : ""}</span>` +
+        rs.map((t) => `<li><button type="button" class="grow" data-st="${t.station}"><span class="gname">${nmL(t.station)}${t.toStation !== t.station ? ` ↔ ${nmL(t.toStation)}` : ""}</span>` +
           `<span class="codes">${codeBadge(t.fromCode)}${t.fromCode !== t.toCode ? `<span class="arr" aria-hidden="true">↔</span>${codeBadge(t.toCode)}` : ""}</span><span class="gmin">${t.min} min</span></button>` +
           (t.note ? `<p class="xnote">${esc(t.note)}</p>` : "") + `</li>`).join("") + `</ul></div>`;
     }
@@ -758,6 +786,20 @@
     drawPins();
   });
   syncXferBtn();
+
+  const locBtn = $("#names-toggle");
+  function syncLocBtn() {
+    const has = N && N.stations.some((s) => (s.label || []).some((r) => r[6]));
+    locBtn.hidden = !has;
+    locBtn.lastChild.textContent = (city && city.localToggleLabel) || "Local names";
+    locBtn.setAttribute("aria-pressed", String(state.showLocal));
+    svg.classList.toggle("hide-local", !state.showLocal);
+  }
+  locBtn.addEventListener("click", () => {
+    state.showLocal = !state.showLocal;
+    try { localStorage.setItem("mrt-local-labels", state.showLocal ? "1" : "0"); } catch (_) { /* ignore */ }
+    syncLocBtn();
+  });
 
   // ----------------------------------------------------------- cities ---
   const loaded = new Map();
@@ -793,6 +835,7 @@
     state.from = state.to = null; state.res = null;
     hidePopup();
     renderCityChrome();
+    syncLocBtn();
     drawMap();
     bounds = computeBounds();
     renderNotices();

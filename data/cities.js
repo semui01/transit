@@ -17,6 +17,7 @@ window.MRT_CITY_LIST = [
     locale: "en-SG",
     example: ["jurong-east", "changi-airport"],
     localNameLabel: "Chinese",
+    localLang: "zh",
     tapOutLabel: "Tap out to transfer",
     tapOutNote: "Tap in again within 15 minutes and it still counts as one journey.",
     fareLabel: "Adult card fare",
@@ -37,6 +38,9 @@ window.MRT_CITY_LIST = [
     locale: "en-JP",
     example: ["shinjuku", "asakusa"],
     localNameLabel: "Japanese",
+    localLang: "ja",
+    showLocalNames: true,       // show 日本語 names next to English in steps, cards and the guide
+    localToggleLabel: "日本語",  // map switch for the Japanese labels
     tapOutLabel: "Transfer outside the gates",
     tapOutNote: "Leave through the ticket gates and enter again within the time limit (30 minutes at most stations); your IC card fare still counts as one journey.",
     fareLabel: "IC card fare",

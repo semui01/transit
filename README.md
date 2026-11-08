@@ -6,6 +6,7 @@ A static web app for planning metro journeys. The home page lists the cities; pi
 - **how long it takes**, split into time on trains, transferring and walking
 - **how much it costs**: the adult fare, worked out the way that city charges
 - **every sensible route option**, with one **suggested** route. Slower routes, or routes with more transfers, are tucked under "more routes".
+- **local names next to English**: in Tokyo every station and line also appears in 日本語 (map labels, From/To boxes, route steps, route cards, guide), so you can match the names on station signs. A "日本語" switch on the map hides the Japanese labels.
 - **how easy each transfer is**: the map shows the transfer time at every interchange, colour-coded from quick (cross-platform) to very long. Select a station for a breakdown by line pair. The **interchange guide** in the side panel lists them all, quickest first.
 
 Cities so far:
