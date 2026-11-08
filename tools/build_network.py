@@ -88,6 +88,27 @@ TRANSFER_MIN = {
 }
 LOOP_CHANGE_MIN = 3   # SE<->SW at Sengkang, PE<->PW at Punggol
 
+# Short notes shown with a transfer (station popup, route steps, interchange guide).
+XPLAT = "Cross-platform for some directions; otherwise one level up or down."
+TEL_DEEP = "Long walk: the Thomson-East Coast Line platforms are deep underground, away from the other lines."
+TRANSFER_NOTES = {
+    ("NS1", "EW24"): "Cross-platform for most directions.",
+    ("NS25", "EW13"): XPLAT,
+    ("NS26", "EW14"): XPLAT,
+    ("EW4", "CG"): "Short change within the station to the Changi Airport branch.",
+    ("CC34", "DT16"): "Cross-platform.",
+    ("EW16", "TE17"): TEL_DEEP,
+    ("NE3", "TE17"): TEL_DEEP,
+    ("NS27", "TE20"): "Long walk to the Thomson-East Coast Line platforms.",
+    ("CC33", "TE20"): "Long walk to the Thomson-East Coast Line platforms.",
+    ("NS22", "TE14"): "Long underground walk between the two lines.",
+    ("EW12", "DT14"): "Long underground walk between the two lines.",
+    ("NS24", "CC1"): "Several escalators and a long walk between the lines.",
+    ("NS21", "DT11"): "Tap out, walk to the other station and tap in again.",
+    ("EW2", "DT32"): "Tap out, walk to the other station and tap in again.",
+    ("BP6", "DT1"): "Tap out, walk to the other station and tap in again.",
+}
+
 # Distance anchors used to calibrate the track-length factor (km, published).
 DIST_ANCHORS = [("EW4", "EW15", 14.0)]   # Tanah Merah - Tanjong Pagar, "14 km" (PTC fare example)
 
@@ -307,7 +328,11 @@ def main():
                 a, b = cs[i], cs[j]
                 tm = tkey(a, b) or DEFAULT_TRANSFER
                 tap = (a, b) in TAP_OUT or (b, a) in TAP_OUT
-                transfers.append(dict(a=a, b=b, min=tm, tapOut=tap) if tap else dict(a=a, b=b, min=tm))
+                t = dict(a=a, b=b, min=tm)
+                if tap: t["tapOut"] = True
+                note = TRANSFER_NOTES.get((a, b)) or TRANSFER_NOTES.get((b, a))
+                if note: t["note"] = note
+                transfers.append(t)
     # loop-to-loop changes at LRT hubs are expressed per line pair in the app (LOOP_CHANGE_MIN)
 
     out_st = []

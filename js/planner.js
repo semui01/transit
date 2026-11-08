@@ -31,6 +31,15 @@
   const MAX_EXTRA_TRANSFERS = 2;
   const MAX_OPTIONS = 8;
 
+  // How convenient a transfer is, by transfer time (walking + average wait).
+  const LEVELS = [
+    { id: "quick", max: 3, label: "Quick change" },
+    { id: "moderate", max: 5, label: "Short walk" },
+    { id: "long", max: 7, label: "Long walk" },
+    { id: "verylong", max: Infinity, label: "Very long" },
+  ];
+  const transferLevel = (min) => LEVELS.find((l) => min <= l.max);
+
   function todayISO() {
     const d = new Date();
     const p = (n) => String(n).padStart(2, "0");
@@ -112,9 +121,29 @@
     function transferAt(stationId, fromLine, toLine) {
       const m = stationLines.get(stationId);
       const a = m[fromLine], b = m[toLine];
-      if (a === b) return { min: loopChangeMin, tapOut: false, fromCode: a, toCode: b };
+      if (a === b) return { min: loopChangeMin, tapOut: false, note: null, level: transferLevel(loopChangeMin), fromCode: a, toCode: b };
       const t = transferInfo.get(a + "|" + b);
-      return { min: t ? t.min : DEFAULT_TRANSFER_MIN, tapOut: !!(t && t.tapOut), fromCode: a, toCode: b };
+      const min = t ? t.min : DEFAULT_TRANSFER_MIN;
+      return { min, tapOut: !!(t && t.tapOut), note: (t && t.note) || null, level: transferLevel(min), fromCode: a, toCode: b };
+    }
+
+    // Every transfer possible at a station (open lines only), quickest first.
+    function stationTransfers(stationId) {
+      const m = stationLines.get(stationId);
+      if (!m) return [];
+      const ls = Object.keys(m);
+      const seen = new Map();
+      for (let i = 0; i < ls.length; i++) for (let j = i + 1; j < ls.length; j++) {
+        const t = transferAt(stationId, ls[i], ls[j]);
+        const key = t.fromCode === t.toCode ? t.fromCode + "|loop" : [t.fromCode, t.toCode].sort().join("|");
+        if (!seen.has(key)) seen.set(key, { station: stationId, lines: [ls[i], ls[j]], ...t });
+      }
+      return [...seen.values()].sort((a, b) => a.min - b.min);
+    }
+    function interchangeGuide() {
+      const rows = [];
+      for (const sid of stationLines.keys()) rows.push(...stationTransfers(sid));
+      return rows.sort((a, b) => a.min - b.min || stationById.get(a.station).name.localeCompare(stationById.get(b.station).name));
     }
 
     // interchange stations between each pair of lines
@@ -392,6 +421,10 @@
       fareDistanceKm,
       scheduleFor,
       transferAt,
+      stationTransfers,
+      interchangeGuide,
+      transferLevel,
+      LEVELS,
     };
   }
 
@@ -465,5 +498,5 @@
     return null;
   }
 
-  return { create, todayISO, TIMING };
+  return { create, todayISO, TIMING, LEVELS };
 });

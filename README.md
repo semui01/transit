@@ -6,6 +6,7 @@ A static web app for planning MRT and LRT journeys in Singapore. Pick a start an
 - **how long it takes**, split into time on trains and time transferring
 - **how much it costs**, as the adult card fare (plus the early-morning fare and any announced fare change)
 - **every sensible route option**, with one **suggested** route. Slower routes, or routes with more transfers, are tucked under "more routes".
+- **how easy each transfer is**: the map shows the transfer time at every interchange, colour-coded from quick (cross-platform at City Hall, Raffles Place, Jurong East, Bayfront) to very long (Outram Park to the TEL, or tap-out transfers). Select a station for a breakdown by line pair. The **interchange guide** in the side panel lists them all, quickest first.
 
 It has no build step and no dependencies. Open `index.html` in a browser, or serve the folder with any static host (GitHub Pages works: Settings → Pages → deploy from `main`, root folder).
 
@@ -26,6 +27,7 @@ The "Travelling on" date in the app lets you plan for a future day, for example 
 - **Journey time.** Each segment takes a dwell time plus distance at an average running speed (MRT: 0.75 min + 62 km/h; LRT: 0.5 min + 34 km/h). Transfers take a per-interchange time for walking plus the average wait, from 3 min (cross-platform) to 9 min (tap-out transfers). These are estimates, close to typical timetable times, for example Jurong East to City Hall in 24 min.
 - **Route options.** The planner tries every sequence of lines up to two more transfers than the minimum, and every interchange station between consecutive lines. It drops routes that pass the same station twice. A route is shown if no route with fewer transfers beats it, and if it is close to the fastest or the quickest for its number of transfers. The **suggested** route minimises time plus 3 min per transfer (plus 2 min for a tap-out transfer).
 - **Tap-out transfers** (Newton NSL–DTL, Tampines EWL–DTL, Bukit Panjang BPLRT–DTL) are labelled in the steps.
+- **Transfer ratings.** Quick change: 3 min or less. Short walk: 4–5 min. Long walk: 6–7 min. Very long: 8 min or more. Times and notes per interchange live in `TRANSFER_MIN` and `TRANSFER_NOTES` in `tools/build_network.py`.
 
 ## Project layout
 

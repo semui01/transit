@@ -12,7 +12,8 @@
   const DEFAULT_EXAMPLE = ["jurong-east", "changi-airport"];
 
   const today = MRTPlanner.todayISO();
-  const state = { from: null, to: null, date: today, sel: 0, res: null, example: false, moreOpen: false };
+  const state = { from: null, to: null, date: today, sel: 0, res: null, example: false, moreOpen: false, showXfer: true };
+  try { if (localStorage.getItem("mrt-show-transfers") === "0") state.showXfer = false; } catch (_) { /* storage unavailable */ }
   let planner = MRTPlanner.create(N, F, { date: state.date });
   const stationById = new Map(N.stations.map((s) => [s.id, s]));
 
@@ -30,6 +31,14 @@
     return `<span class="chip${DARK_TEXT.has(L.color) ? " dark-text" : ""}" style="--c:${L.color}" title="${esc(L.name)}">${esc(L.short)}</span>`;
   }
   const money = (c) => "$" + (c / 100).toFixed(2);
+  const lvlChip = (t, text) => `<span class="lvl lvl-${t.level.id}${t.tapOut ? " tap" : ""}">${text || `${t.min} min`}</span>`;
+  function pairHtml(t) {
+    if (t.fromCode === t.toCode) {
+      const names = t.lines.map((l) => N.lines[l].name.match(/\((.*)\)/)).map((m) => (m ? m[1].replace(/ Loop$/, "") : ""));
+      return `<span class="codes">${codeBadge(t.fromCode)}</span> <span class="pairtxt">${esc(names.join(" ↔ "))} loop</span>`;
+    }
+    return `<span class="codes">${codeBadge(t.fromCode)}<span class="arr" aria-hidden="true">↔</span>${codeBadge(t.toCode)}</span>`;
+  }
   function fmtDate(iso) {
     const [y, m, d] = iso.split("-").map(Number);
     return new Date(y, m - 1, d).toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric" });
@@ -136,6 +145,7 @@
     planner = MRTPlanner.create(N, F, { date: d });
     drawMap();
     renderNotices();
+    renderGuide();
     replan({ fit: false });
   }
 
@@ -192,6 +202,7 @@
     svg.innerHTML = "";
     const base = el("g", { class: "base" }, svg);
     const gl = el("g", {}, base), gs = el("g", {}, base), gt = el("g", {}, base);
+    layers.xfer = el("g", { class: "xferlayer" }, svg);
     layers.route = el("g", {}, svg);
     layers.pins = el("g", {}, svg);
 
@@ -233,9 +244,31 @@
       drawLabel(s, gt, open ? "" : " soon");
     }
 
+    drawTransferPills();
     drawLegend();
     drawRoute(currentOption());
     drawPins();
+  }
+
+  // Minutes-to-transfer pill, centred on an interchange.
+  function pill(parent, s, text, levelId, tapOut) {
+    const fs = 6.6, w = text.length * fs * 0.49 + 5, h = fs + 3.2;
+    const g = el("g", { class: `xp xp-${levelId}${tapOut ? " tap" : ""}`, "data-st": s.id }, parent);
+    el("rect", { x: s.x - w / 2, y: s.y - h / 2, width: w, height: h, rx: h / 2, "stroke-width": 0.9 }, g);
+    const t = el("text", { x: s.x, y: s.y + fs * 0.36, "text-anchor": "middle", "font-size": fs }, g);
+    t.textContent = text;
+    return g;
+  }
+  function drawTransferPills() {
+    layers.xfer.innerHTML = "";
+    svg.classList.toggle("show-xfer", state.showXfer);
+    if (!state.showXfer) return;
+    for (const s of N.stations) {
+      const ts = planner.stationTransfers(s.id);
+      if (!ts.length || s.x == null) continue;
+      const lo = ts[0].min, hi = ts[ts.length - 1].min;
+      pill(layers.xfer, s, lo === hi ? `${lo} min` : `${lo}–${hi} min`, planner.transferLevel(hi).id, ts.some((t) => t.tapOut));
+    }
   }
 
   function computeBounds() {
@@ -260,7 +293,9 @@
     }
     items.sort((a, b) => (a[1] === "LRT") - (b[1] === "LRT"));
     $("#legend").innerHTML = items.map(([c, label]) => `<span><i style="--c:${c}"></i>${esc(label)}</span>`).join("") +
-      (N.stations.some((s) => !planner.isStationOpen(s.id)) ? `<span><i class="dash"></i>Opening soon</span>` : "");
+      (N.stations.some((s) => !planner.isStationOpen(s.id)) ? `<span><i class="dash"></i>Opening soon</span>` : "") +
+      (state.showXfer ? `<div class="lg-x"><span class="lg-t">Transfer time</span>${MRTPlanner.LEVELS.map((l, i, a) =>
+        `<span class="lvl lvl-${l.id}">${i === 0 ? `≤${l.max}` : l.max === Infinity ? `${a[i - 1].max + 1}+` : `${a[i - 1].max + 1}–${l.max}`}</span>`).join("")}<span class="lg-t">min</span><span class="lvl tap lvl-verylong">tap out</span></div>` : "");
   }
 
   function currentOption() {
@@ -272,7 +307,7 @@
   function drawRoute(o) {
     layers.route.innerHTML = "";
     svg.classList.toggle("has-route", !!o);
-    if (!o) return;
+    if (!o) { for (const p of layers.xfer.children) p.style.visibility = ""; return; }
     const g = layers.route;
     const onRoute = new Set();
     for (const leg of o.legs) {
@@ -287,11 +322,14 @@
         el("circle", { cx: x, cy: y, r: 1.8, fill: "#fff", stroke: leg.color, "stroke-width": 1.2, "data-st": planner.stationByCode(c).id }, g);
       });
     }
+    for (const id of onRoute) drawLabel(stationById.get(id), g, "");
+    // pills under the route line would be half covered; the route's own transfers get their own pill
+    for (const p of layers.xfer.children) p.style.visibility = onRoute.has(p.dataset.st) ? "hidden" : "";
     for (const t of o.transfers) {
       const s = stationById.get(t.station);
-      el("circle", { cx: s.x, cy: s.y, r: 5, "stroke-width": 2.2, style: "fill:var(--station-fill);stroke:var(--ink)", "data-st": s.id }, g);
+      if (state.showXfer) pill(g, s, `${t.min} min`, t.level.id, t.tapOut).classList.add("on-route");
+      else el("circle", { cx: s.x, cy: s.y, r: 5, "stroke-width": 2.2, style: "fill:var(--station-fill);stroke:var(--ink)", "data-st": s.id }, g);
     }
-    for (const id of onRoute) drawLabel(stationById.get(id), g, "");
   }
 
   function drawPins() {
@@ -321,7 +359,8 @@
     const { cw, ch } = size();
     const legend = $("#legend");
     const legendH = legend && legend.offsetParent ? legend.offsetHeight + 20 : 0;
-    const ins = { t: 52, r: 58, b: Math.max(16, legendH), l: 16 };
+    const top = $(".map-top");
+    const ins = { t: (top ? top.offsetHeight : 40) + 20, r: 58, b: Math.max(16, legendH), l: 16 };
     const aw = Math.max(80, cw - ins.l - ins.r), ah = Math.max(80, ch - ins.t - ins.b);
     const bw = Math.max(b.w + 2 * pad, minW || 0), bh = b.h + 2 * pad;
     const k = Math.max(bw / aw, bh / ah); // map units per pixel
@@ -445,6 +484,7 @@
     const d = firstOpening(s);
     popup.innerHTML = `<button type="button" class="x" data-act="close" aria-label="Close">&times;</button>` +
       `<h3>${esc(s.name)}${s.zh ? `<span class="zh">${esc(s.zh)}</span>` : ""}</h3>${badges(s)}` +
+      transfersListHtml(planner.stationTransfers(id)) +
       (open
         ? `<div class="acts"><button type="button" class="a" data-act="from">Start here</button><button type="button" class="b" data-act="to">Go here</button></div>`
         : `<p class="soonnote">Opens on ${fmtDate(d)}.</p><div class="acts"><button type="button" class="a" data-act="date" data-date="${d}">Plan for ${fmtDate(d)}</button></div>`);
@@ -452,6 +492,12 @@
     positionPopup();
     const first = popup.querySelector(".acts button");
     if (first) first.focus({ preventScroll: true });
+  }
+  function transfersListHtml(ts) {
+    if (!ts.length) return "";
+    return `<ul class="xlist" aria-label="Transfers at this station">` + ts.map((t) =>
+      `<li><div class="xrow">${pairHtml(t)}${lvlChip(t, `${t.min} min · ${t.level.label}`)}</div>` +
+      (t.note ? `<div class="xnote">${esc(t.note)}</div>` : "") + `</li>`).join("") + `</ul>`;
   }
   function hidePopup() { popup.hidden = true; popupStation = null; }
   function positionPopup() {
@@ -513,7 +559,8 @@
       } else {
         const t = o.transfers[i - 1];
         h += `<li class="stop xfer"><span class="name">${esc(s.name)}</span><span class="codes">${codeBadge(t.fromCode)}${t.fromCode !== t.toCode ? codeBadge(t.toCode) : ""}</span>` +
-          `<div class="sub">Transfer to the <b>${esc(lineName(leg))}</b>${towardsText(leg)} · about ${t.min} min</div>` +
+          `<div class="sub">Transfer to the <b>${esc(lineName(leg))}</b>${towardsText(leg)}</div>` +
+          `<div class="sub">${lvlChip(t, `about ${t.min} min · ${t.level.label}`)}${t.note && !t.tapOut ? ` ${esc(t.note)}` : ""}</div>` +
           (t.tapOut ? `<div class="sub"><span class="tapout">Tap out to transfer</span> Tap in again within 15 minutes and it still counts as one journey.</div>` : "") +
           `</li>`;
       }
@@ -606,6 +653,48 @@
   });
   $("#results").addEventListener("toggle", (e) => { if (e.target.classList && e.target.classList.contains("more")) state.moreOpen = e.target.open; }, true);
 
+  // ---------------------------------------------------- interchange guide ---
+  const LEVEL_HEAD = { quick: "3 min or less", moderate: "4 to 5 min", long: "6 to 7 min", verylong: "8 min or more" };
+  function renderGuide() {
+    const rows = planner.interchangeGuide();
+    let h = `<p class="gintro">Transfer times include walking between platforms and the average wait for the next train. ` +
+      `The planner counts them when it compares routes, so a route with one long transfer can lose to a route with two quick ones.</p>`;
+    for (const L of MRTPlanner.LEVELS) {
+      const rs = rows.filter((t) => t.level.id === L.id);
+      if (!rs.length) continue;
+      h += `<div class="ggroup"><h3><span class="lvl lvl-${L.id}">${esc(L.label)}</span> ${LEVEL_HEAD[L.id]}</h3><ul>` +
+        rs.map((t) => `<li><button type="button" class="grow" data-st="${t.station}"><span class="gname">${esc(nm(t.station))}</span>${pairHtml(t)}<span class="gmin">${t.min} min</span></button>` +
+          (t.note ? `<p class="xnote">${esc(t.note)}</p>` : "") + `</li>`).join("") + `</ul></div>`;
+    }
+    $("#guide-body").innerHTML = h;
+  }
+  $("#guide-body").addEventListener("click", (e) => {
+    const b = e.target.closest(".grow");
+    if (b) focusStation(b.dataset.st);
+  });
+  function focusStation(id) {
+    const s = stationById.get(id);
+    const { cw, ch } = size();
+    const w = Math.min(view.w, 420), h = w * (ch / cw);
+    goTo({ x: s.x - w / 2, y: s.y - h / 2, w, h }, true);
+    showPopup(id);
+    const r = $("#mapwrap").getBoundingClientRect();
+    if (r.bottom < 0 || r.top > window.innerHeight) $("#mapwrap").scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "center" });
+  }
+
+  // transfer pill toggle
+  const xferBtn = $("#xfer-toggle");
+  function syncXferBtn() { xferBtn.setAttribute("aria-pressed", String(state.showXfer)); }
+  xferBtn.addEventListener("click", () => {
+    state.showXfer = !state.showXfer;
+    try { localStorage.setItem("mrt-show-transfers", state.showXfer ? "1" : "0"); } catch (_) { /* ignore */ }
+    syncXferBtn();
+    drawTransferPills();
+    drawLegend();
+    drawRoute(currentOption());
+    drawPins();
+  });
+
   // --------------------------------------------------------------- hash ---
   function updateHash() {
     const h = state.from && state.to && !state.example ? `#${state.from}--${state.to}` : "";
@@ -634,9 +723,11 @@
   combos.from.restore(); combos.to.restore();
   $("#today-btn").hidden = true;
 
+  syncXferBtn();
   drawMap();
   bounds = computeBounds();
   renderNotices();
+  renderGuide();
   requestAnimationFrame(() => {
     fitAll(false);
     replan({ animate: false });
